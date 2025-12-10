@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/rmrfslashbin/manuals-mcp-server/pkg/models"
 )
@@ -87,6 +88,10 @@ func InsertPinouts(db *sql.DB, deviceID string, pinouts []models.Pinout) error {
 
 // SearchDevices performs a full-text search on devices.
 func SearchDevices(db *sql.DB, opts models.SearchOptions) ([]models.SearchResult, error) {
+	// Quote the query to handle special FTS5 characters (hyphens, etc.)
+	// This treats the query as a phrase search instead of boolean operations
+	ftsQuery := `"` + strings.ReplaceAll(opts.Query, `"`, `""`) + `"`
+
 	query := `
 		SELECT
 			d.id,
@@ -100,7 +105,7 @@ func SearchDevices(db *sql.DB, opts models.SearchOptions) ([]models.SearchResult
 		JOIN devices d ON d.id = fts.device_id
 		WHERE search_fts MATCH ?
 	`
-	args := []interface{}{opts.Query}
+	args := []interface{}{ftsQuery}
 
 	if opts.Domain != nil {
 		query += " AND d.domain = ?"
@@ -153,6 +158,7 @@ func SearchDevices(db *sql.DB, opts models.SearchOptions) ([]models.SearchResult
 func GetDevice(db *sql.DB, deviceID string) (*models.Device, error) {
 	var device models.Device
 	var metadataJSON string
+	var indexedAtUnix int64
 
 	err := db.QueryRow(`
 		SELECT id, domain, type, name, path, metadata, indexed_at
@@ -165,7 +171,7 @@ func GetDevice(db *sql.DB, deviceID string) (*models.Device, error) {
 		&device.Name,
 		&device.Path,
 		&metadataJSON,
-		&device.IndexedAt,
+		&indexedAtUnix,
 	)
 
 	if err == sql.ErrNoRows {
@@ -178,6 +184,9 @@ func GetDevice(db *sql.DB, deviceID string) (*models.Device, error) {
 	if err := json.Unmarshal([]byte(metadataJSON), &device.Metadata); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
 	}
+
+	// Convert Unix timestamp to time.Time
+	device.IndexedAt = time.Unix(indexedAtUnix, 0)
 
 	return &device, nil
 }
@@ -246,6 +255,7 @@ func ListDevices(db *sql.DB, domain *models.Domain) ([]models.Device, error) {
 	for rows.Next() {
 		var device models.Device
 		var metadataJSON string
+		var indexedAtUnix int64
 
 		err := rows.Scan(
 			&device.ID,
@@ -254,7 +264,7 @@ func ListDevices(db *sql.DB, domain *models.Domain) ([]models.Device, error) {
 			&device.Name,
 			&device.Path,
 			&metadataJSON,
-			&device.IndexedAt,
+			&indexedAtUnix,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan device: %w", err)
@@ -263,6 +273,9 @@ func ListDevices(db *sql.DB, domain *models.Domain) ([]models.Device, error) {
 		if err := json.Unmarshal([]byte(metadataJSON), &device.Metadata); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
 		}
+
+		// Convert Unix timestamp to time.Time
+		device.IndexedAt = time.Unix(indexedAtUnix, 0)
 
 		devices = append(devices, device)
 	}
