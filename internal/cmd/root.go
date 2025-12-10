@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
+	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -69,13 +71,22 @@ func init() {
 	viper.BindPFlag("log.format", rootCmd.PersistentFlags().Lookup("log-format"))
 	viper.BindPFlag("log.output", rootCmd.PersistentFlags().Lookup("log-output"))
 
-	// Set environment variable prefix
+	// Set environment variable prefix and key replacer
+	// Maps viper keys like "log.level" to env vars like "MANUALS_LOG_LEVEL"
 	viper.SetEnvPrefix("MANUALS")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
 }
 
 // initConfig reads in config file and ENV variables if set.
 func initConfig() {
+	// Load .env file if it exists (silently ignore if not found)
+	// Priority: .env in current directory, then .env in home directory
+	_ = godotenv.Load() // Current directory
+	if home, err := os.UserHomeDir(); err == nil {
+		_ = godotenv.Load(home + "/.env") // Home directory
+	}
+
 	if cfgFile != "" {
 		// Use config file from the flag
 		viper.SetConfigFile(cfgFile)
@@ -89,6 +100,7 @@ func initConfig() {
 
 		// Search config in home directory with name ".manuals-mcp" (without extension)
 		viper.AddConfigPath(home)
+		viper.AddConfigPath(".") // Also search current directory
 		viper.SetConfigType("yaml")
 		viper.SetConfigName(".manuals-mcp")
 	}
