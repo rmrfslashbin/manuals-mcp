@@ -15,16 +15,22 @@ import (
 
 // Server wraps the MCP server with our database.
 type Server struct {
-	mcp    *server.MCPServer
-	db     *sql.DB
-	logger *slog.Logger
+	mcp       *server.MCPServer
+	db        *sql.DB
+	logger    *slog.Logger
+	version   string
+	gitCommit string
+	buildTime string
 }
 
 // NewServer creates a new MCP server instance.
-func NewServer(database *sql.DB, version string, logger *slog.Logger) *Server {
+func NewServer(database *sql.DB, version, gitCommit, buildTime string, logger *slog.Logger) *Server {
 	s := &Server{
-		db:     database,
-		logger: logger,
+		db:        database,
+		logger:    logger,
+		version:   version,
+		gitCommit: gitCommit,
+		buildTime: buildTime,
 	}
 
 	// Create MCP server with all capabilities
@@ -91,6 +97,11 @@ func (s *Server) registerTools() {
 	s.mcp.AddTool(mcp.NewTool("get_stats",
 		mcp.WithDescription("Get statistics about the indexed documentation database"),
 	), s.handleGetStats)
+
+	// Tool: get_info - Get server version and platform information
+	s.mcp.AddTool(mcp.NewTool("get_info",
+		mcp.WithDescription("Get MCP server version, build info, database statistics, and platform capabilities"),
+	), s.handleGetInfo)
 }
 
 // registerResources registers all MCP resources.

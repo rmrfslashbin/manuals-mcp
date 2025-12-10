@@ -67,7 +67,7 @@ Environment Variables:
 		}
 
 		// Create MCP server
-		mcpServer := mcp.NewServer(database, version, logger)
+		mcpServer := mcp.NewServer(database, version, gitCommit, buildTime, logger)
 
 		logger.Info("MCP server ready, listening on stdio")
 

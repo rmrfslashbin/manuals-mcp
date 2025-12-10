@@ -234,3 +234,42 @@ func (s *Server) handleGetStats(ctx context.Context, request mcp.CallToolRequest
 
 	return mcp.NewToolResultText(output.String()), nil
 }
+
+// handleGetInfo handles the get_info tool.
+func (s *Server) handleGetInfo(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Get database stats
+	stats, err := db.GetStats(s.db)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get stats: %v", err)), nil
+	}
+
+	// Build info output
+	var output strings.Builder
+	output.WriteString("# Manuals MCP Server Information\n\n")
+
+	// Version information
+	output.WriteString("## Version\n\n")
+	output.WriteString(fmt.Sprintf("- **Version:** %s\n", s.version))
+	output.WriteString(fmt.Sprintf("- **Git Commit:** %s\n", s.gitCommit))
+	output.WriteString(fmt.Sprintf("- **Build Time:** %s\n", s.buildTime))
+	output.WriteString(fmt.Sprintf("- **Project:** github.com/rmrfslashbin/manuals-mcp-server\n"))
+	output.WriteString(fmt.Sprintf("- **License:** MIT\n\n"))
+
+	// Database statistics
+	output.WriteString("## Database Statistics\n\n")
+	output.WriteString(fmt.Sprintf("- **Total Devices:** %d\n", stats.TotalDevices))
+	output.WriteString(fmt.Sprintf("  - Hardware: %d\n", stats.HardwareCount))
+	output.WriteString(fmt.Sprintf("  - Software: %d\n", stats.SoftwareCount))
+	output.WriteString(fmt.Sprintf("  - Protocols: %d\n", stats.ProtocolCount))
+	output.WriteString(fmt.Sprintf("- **Total Pinouts:** %d\n", stats.TotalPinouts))
+	output.WriteString(fmt.Sprintf("- **Total Specifications:** %d\n\n", stats.TotalSpecs))
+
+	// Capabilities
+	output.WriteString("## MCP Capabilities\n\n")
+	output.WriteString("- **Tools:** 5 (search, get_pinout, list_hardware, get_stats, get_info)\n")
+	output.WriteString("- **Resources:** 2 templates (device documentation, pinout)\n")
+	output.WriteString("- **Prompts:** 4 templates (wiring-guide, pinout-explain, device-compare, protocol-guide)\n")
+	output.WriteString("- **Transport:** stdio\n")
+
+	return mcp.NewToolResultText(output.String()), nil
+}

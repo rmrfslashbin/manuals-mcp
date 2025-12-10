@@ -88,9 +88,10 @@ func InsertPinouts(db *sql.DB, deviceID string, pinouts []models.Pinout) error {
 
 // SearchDevices performs a full-text search on devices.
 func SearchDevices(db *sql.DB, opts models.SearchOptions) ([]models.SearchResult, error) {
-	// Quote the query to handle special FTS5 characters (hyphens, etc.)
-	// This treats the query as a phrase search instead of boolean operations
-	ftsQuery := `"` + strings.ReplaceAll(opts.Query, `"`, `""`) + `"`
+	// Smart FTS5 query building:
+	// - If query contains hyphens (like "raspberry-pi-4"), quote it as exact phrase
+	// - Otherwise, allow multi-word boolean search (like "analog sensor")
+	ftsQuery := buildFTSQuery(opts.Query)
 
 	query := `
 		SELECT
@@ -231,6 +232,40 @@ func GetPinouts(db *sql.DB, deviceID string) ([]models.Pinout, error) {
 	}
 
 	return pinouts, rows.Err()
+}
+
+// buildFTSQuery constructs an FTS5 query string with smart quoting.
+// Quotes terms with hyphens (device models) but allows boolean search for regular words.
+func buildFTSQuery(query string) string {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return ""
+	}
+
+	// Check if query contains hyphens between word characters (likely a model number)
+	// Examples: "raspberry-pi-4", "esp32-s3", "sen0244" (no hyphens)
+	hasModelHyphens := strings.Contains(query, "-") &&
+		len(strings.FieldsFunc(query, func(r rune) bool { return r == '-' })) > 1
+
+	// If it looks like a model number with hyphens, quote the whole thing
+	if hasModelHyphens {
+		// Escape any existing quotes
+		escaped := strings.ReplaceAll(query, `"`, `""`)
+		return `"` + escaped + `"`
+	}
+
+	// For multi-word queries without hyphens, use implicit AND (FTS5 default)
+	// This allows "analog sensor" to match documents with both words
+	// Escape any quotes in individual words
+	words := strings.Fields(query)
+	for i, word := range words {
+		// If individual word contains hyphen, quote it
+		if strings.Contains(word, "-") {
+			words[i] = `"` + strings.ReplaceAll(word, `"`, `""`) + `"`
+		}
+	}
+
+	return strings.Join(words, " ")
 }
 
 // ListDevices retrieves all devices, optionally filtered by domain.
