@@ -102,6 +102,26 @@ func (s *Server) registerTools() {
 	s.mcp.AddTool(mcp.NewTool("get_info",
 		mcp.WithDescription("Get MCP server version, build info, database statistics, and platform capabilities"),
 	), s.handleGetInfo)
+
+	// Tool: get_tags - List all unique tags
+	s.mcp.AddTool(mcp.NewTool("get_tags",
+		mcp.WithDescription("List all unique tags from device metadata"),
+	), s.handleGetTags)
+
+	// Tool: get_categories - List all categories
+	s.mcp.AddTool(mcp.NewTool("get_categories",
+		mcp.WithDescription("List all categories with device counts"),
+	), s.handleGetCategories)
+
+	// Tool: get_manufacturers - List all manufacturers
+	s.mcp.AddTool(mcp.NewTool("get_manufacturers",
+		mcp.WithDescription("List all manufacturers with device counts"),
+	), s.handleGetManufacturers)
+
+	// Tool: get_metadata_schema - Show metadata schema
+	s.mcp.AddTool(mcp.NewTool("get_metadata_schema",
+		mcp.WithDescription("Show available metadata fields and their types across all devices"),
+	), s.handleGetMetadataSchema)
 }
 
 // registerResources registers all MCP resources.

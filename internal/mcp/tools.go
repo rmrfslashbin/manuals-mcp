@@ -266,10 +266,90 @@ func (s *Server) handleGetInfo(ctx context.Context, request mcp.CallToolRequest)
 
 	// Capabilities
 	output.WriteString("## MCP Capabilities\n\n")
-	output.WriteString("- **Tools:** 5 (search, get_pinout, list_hardware, get_stats, get_info)\n")
+	output.WriteString("- **Tools:** 9 (search, get_pinout, list_hardware, get_stats, get_info, get_tags, get_categories, get_manufacturers, get_metadata_schema)\n")
 	output.WriteString("- **Resources:** 2 templates (device documentation, pinout)\n")
 	output.WriteString("- **Prompts:** 4 templates (wiring-guide, pinout-explain, device-compare, protocol-guide)\n")
 	output.WriteString("- **Transport:** stdio\n")
 
 	return mcp.NewToolResultText(output.String()), nil
+}
+
+// handleGetTags handles the get_tags tool.
+func (s *Server) handleGetTags(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	tags, err := db.GetAllTags(s.db)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get tags: %v", err)), nil
+	}
+
+	var output strings.Builder
+	output.WriteString("# Available Tags\n\n")
+	output.WriteString(fmt.Sprintf("Total unique tags: %d\n\n", len(tags)))
+
+	for _, tag := range tags {
+		output.WriteString(fmt.Sprintf("- `%s`\n", tag))
+	}
+
+	return mcp.NewToolResultText(output.String()), nil
+}
+
+// handleGetCategories handles the get_categories tool.
+func (s *Server) handleGetCategories(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	categories, err := db.GetAllCategories(s.db)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get categories: %v", err)), nil
+	}
+
+	var output strings.Builder
+	output.WriteString("# Available Categories\n\n")
+	output.WriteString(fmt.Sprintf("Total categories: %d\n\n", len(categories)))
+
+	for category, count := range categories {
+		output.WriteString(fmt.Sprintf("- **%s** (%d device%s)\n", category, count, pluralize(count)))
+	}
+
+	return mcp.NewToolResultText(output.String()), nil
+}
+
+// handleGetManufacturers handles the get_manufacturers tool.
+func (s *Server) handleGetManufacturers(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	manufacturers, err := db.GetAllManufacturers(s.db)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get manufacturers: %v", err)), nil
+	}
+
+	var output strings.Builder
+	output.WriteString("# Available Manufacturers\n\n")
+	output.WriteString(fmt.Sprintf("Total manufacturers: %d\n\n", len(manufacturers)))
+
+	for manufacturer, count := range manufacturers {
+		output.WriteString(fmt.Sprintf("- **%s** (%d device%s)\n", manufacturer, count, pluralize(count)))
+	}
+
+	return mcp.NewToolResultText(output.String()), nil
+}
+
+// handleGetMetadataSchema handles the get_metadata_schema tool.
+func (s *Server) handleGetMetadataSchema(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	schema, err := db.GetMetadataSchema(s.db)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get metadata schema: %v", err)), nil
+	}
+
+	var output strings.Builder
+	output.WriteString("# Metadata Schema\n\n")
+	output.WriteString("Available metadata fields across all devices:\n\n")
+
+	for key, typeInfo := range schema {
+		output.WriteString(fmt.Sprintf("- **%s**: %v\n", key, typeInfo))
+	}
+
+	return mcp.NewToolResultText(output.String()), nil
+}
+
+// pluralize returns "s" if count != 1, empty string otherwise.
+func pluralize(count int) string {
+	if count == 1 {
+		return ""
+	}
+	return "s"
 }

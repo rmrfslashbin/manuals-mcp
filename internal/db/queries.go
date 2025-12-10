@@ -20,9 +20,9 @@ func InsertDevice(db *sql.DB, device *models.Device) error {
 
 	// Insert device
 	_, err = db.Exec(`
-		INSERT OR REPLACE INTO devices (id, domain, type, name, path, metadata)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, device.ID, device.Domain, device.Type, device.Name, device.Path, metadataJSON)
+		INSERT OR REPLACE INTO devices (id, domain, type, name, path, content, metadata)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, device.ID, device.Domain, device.Type, device.Name, device.Path, device.Content, metadataJSON)
 	if err != nil {
 		return fmt.Errorf("failed to insert device: %w", err)
 	}
@@ -162,7 +162,7 @@ func GetDevice(db *sql.DB, deviceID string) (*models.Device, error) {
 	var indexedAtUnix int64
 
 	err := db.QueryRow(`
-		SELECT id, domain, type, name, path, metadata, indexed_at
+		SELECT id, domain, type, name, path, content, metadata, indexed_at
 		FROM devices
 		WHERE id = ?
 	`, deviceID).Scan(
@@ -171,6 +171,7 @@ func GetDevice(db *sql.DB, deviceID string) (*models.Device, error) {
 		&device.Type,
 		&device.Name,
 		&device.Path,
+		&device.Content,
 		&metadataJSON,
 		&indexedAtUnix,
 	)
@@ -270,7 +271,7 @@ func buildFTSQuery(query string) string {
 
 // ListDevices retrieves all devices, optionally filtered by domain.
 func ListDevices(db *sql.DB, domain *models.Domain) ([]models.Device, error) {
-	query := "SELECT id, domain, type, name, path, metadata, indexed_at FROM devices"
+	query := "SELECT id, domain, type, name, path, content, metadata, indexed_at FROM devices"
 	args := []interface{}{}
 
 	if domain != nil {
@@ -298,6 +299,7 @@ func ListDevices(db *sql.DB, domain *models.Domain) ([]models.Device, error) {
 			&device.Type,
 			&device.Name,
 			&device.Path,
+			&device.Content,
 			&metadataJSON,
 			&indexedAtUnix,
 		)
@@ -316,6 +318,132 @@ func ListDevices(db *sql.DB, domain *models.Domain) ([]models.Device, error) {
 	}
 
 	return devices, rows.Err()
+}
+
+// GetAllTags retrieves all unique tags from all devices.
+func GetAllTags(db *sql.DB) ([]string, error) {
+	rows, err := db.Query(`
+		SELECT DISTINCT json_each.value as tag
+		FROM devices, json_each(json_extract(metadata, '$.tags'))
+		WHERE json_extract(metadata, '$.tags') IS NOT NULL
+		ORDER BY tag
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get tags: %w", err)
+	}
+	defer rows.Close()
+
+	var tags []string
+	for rows.Next() {
+		var tag string
+		if err := rows.Scan(&tag); err != nil {
+			return nil, fmt.Errorf("failed to scan tag: %w", err)
+		}
+		tags = append(tags, tag)
+	}
+
+	return tags, rows.Err()
+}
+
+// GetAllCategories retrieves all unique categories with device counts.
+func GetAllCategories(db *sql.DB) (map[string]int, error) {
+	rows, err := db.Query(`
+		SELECT json_extract(metadata, '$.category') as category, COUNT(*) as count
+		FROM devices
+		WHERE json_extract(metadata, '$.category') IS NOT NULL
+		GROUP BY category
+		ORDER BY category
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get categories: %w", err)
+	}
+	defer rows.Close()
+
+	categories := make(map[string]int)
+	for rows.Next() {
+		var category string
+		var count int
+		if err := rows.Scan(&category, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan category: %w", err)
+		}
+		categories[category] = count
+	}
+
+	return categories, rows.Err()
+}
+
+// GetAllManufacturers retrieves all unique manufacturers with device counts.
+func GetAllManufacturers(db *sql.DB) (map[string]int, error) {
+	rows, err := db.Query(`
+		SELECT json_extract(metadata, '$.manufacturer') as manufacturer, COUNT(*) as count
+		FROM devices
+		WHERE json_extract(metadata, '$.manufacturer') IS NOT NULL
+		GROUP BY manufacturer
+		ORDER BY manufacturer
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get manufacturers: %w", err)
+	}
+	defer rows.Close()
+
+	manufacturers := make(map[string]int)
+	for rows.Next() {
+		var manufacturer string
+		var count int
+		if err := rows.Scan(&manufacturer, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan manufacturer: %w", err)
+		}
+		manufacturers[manufacturer] = count
+	}
+
+	return manufacturers, rows.Err()
+}
+
+// GetMetadataSchema retrieves all unique metadata keys across all devices.
+func GetMetadataSchema(db *sql.DB) (map[string]interface{}, error) {
+	// Get all metadata JSON documents
+	rows, err := db.Query("SELECT metadata FROM devices")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query metadata: %w", err)
+	}
+	defer rows.Close()
+
+	// Collect all unique keys
+	schema := make(map[string]map[string]bool) // key -> set of types
+	for rows.Next() {
+		var metadataJSON string
+		if err := rows.Scan(&metadataJSON); err != nil {
+			return nil, fmt.Errorf("failed to scan metadata: %w", err)
+		}
+
+		var metadata map[string]interface{}
+		if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
+			continue // Skip invalid JSON
+		}
+
+		for key, value := range metadata {
+			if schema[key] == nil {
+				schema[key] = make(map[string]bool)
+			}
+			schema[key][fmt.Sprintf("%T", value)] = true
+		}
+	}
+
+	// Convert to readable format
+	result := make(map[string]interface{})
+	for key, types := range schema {
+		typeList := make([]string, 0, len(types))
+		for t := range types {
+			typeList = append(typeList, t)
+		}
+		if len(typeList) == 1 {
+			result[key] = typeList[0]
+		} else {
+			result[key] = typeList
+		}
+	}
+
+	return result, rows.Err()
 }
 
 // GetStats retrieves database statistics.

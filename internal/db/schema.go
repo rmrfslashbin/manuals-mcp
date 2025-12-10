@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS devices (
 	type TEXT NOT NULL,
 	name TEXT NOT NULL,
 	path TEXT NOT NULL,
+	content TEXT NOT NULL DEFAULT '', -- Full markdown content
 	metadata TEXT NOT NULL, -- JSON
 	indexed_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
 );

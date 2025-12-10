@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -22,7 +20,7 @@ func (s *Server) handleDeviceResource(ctx context.Context, request mcp.ReadResou
 	}
 	deviceID := parts[len(parts)-1]
 
-	// Get device
+	// Get device from database (includes full markdown content)
 	device, err := db.GetDevice(s.db, deviceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get device: %w", err)
@@ -31,16 +29,10 @@ func (s *Server) handleDeviceResource(ctx context.Context, request mcp.ReadResou
 		return nil, fmt.Errorf("device not found: %s", deviceID)
 	}
 
-	// Read the documentation file if path exists
-	var content string
-	if device.Path != "" && fileExists(device.Path) {
-		data, err := os.ReadFile(device.Path)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read documentation: %w", err)
-		}
-		content = string(data)
-	} else {
-		// Generate content from metadata
+	// Use content from database (no file I/O needed)
+	content := device.Content
+	if content == "" {
+		// Fallback: Generate minimal content from metadata if content is empty
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("# %s\n\n", device.Name))
 		sb.WriteString(fmt.Sprintf("**Domain:** %s\n", device.Domain))
@@ -140,15 +132,3 @@ func (s *Server) handlePinoutResource(ctx context.Context, request mcp.ReadResou
 	}, nil
 }
 
-// fileExists checks if a file exists.
-func fileExists(path string) bool {
-	if path == "" {
-		return false
-	}
-	// Handle relative paths
-	if !filepath.IsAbs(path) {
-		return false
-	}
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
