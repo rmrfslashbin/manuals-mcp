@@ -67,9 +67,14 @@ Environment Variables:
 		}
 
 		// Create MCP server
-		mcpServer := mcp.NewServer(database, version, gitCommit, buildTime, logger)
+		docsPath := viper.GetString("docs.path")
+		mcpServer := mcp.NewServer(database, docsPath, version, gitCommit, buildTime, logger)
 
-		logger.Info("MCP server ready, listening on stdio")
+		if docsPath != "" {
+			logger.Info("MCP server ready with reindex capability", "docs_path", docsPath)
+		} else {
+			logger.Info("MCP server ready, listening on stdio")
+		}
 
 		// Serve (blocks until shutdown)
 		return mcpServer.Serve(cmd.Context())

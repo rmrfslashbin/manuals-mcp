@@ -17,6 +17,7 @@ import (
 type Server struct {
 	mcp       *server.MCPServer
 	db        *sql.DB
+	docsPath  string
 	logger    *slog.Logger
 	version   string
 	gitCommit string
@@ -24,9 +25,10 @@ type Server struct {
 }
 
 // NewServer creates a new MCP server instance.
-func NewServer(database *sql.DB, version, gitCommit, buildTime string, logger *slog.Logger) *Server {
+func NewServer(database *sql.DB, docsPath, version, gitCommit, buildTime string, logger *slog.Logger) *Server {
 	s := &Server{
 		db:        database,
+		docsPath:  docsPath,
 		logger:    logger,
 		version:   version,
 		gitCommit: gitCommit,
@@ -122,6 +124,13 @@ func (s *Server) registerTools() {
 	s.mcp.AddTool(mcp.NewTool("get_metadata_schema",
 		mcp.WithDescription("Show available metadata fields and their types across all devices"),
 	), s.handleGetMetadataSchema)
+
+	// Tool: reindex - Rebuild documentation index (only if docs-path is configured)
+	if s.docsPath != "" {
+		s.mcp.AddTool(mcp.NewTool("reindex",
+			mcp.WithDescription("Rebuild documentation index from source files (requires --docs-path)"),
+		), s.handleReindex)
+	}
 }
 
 // registerResources registers all MCP resources.

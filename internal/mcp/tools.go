@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/rmrfslashbin/manuals-mcp-server/internal/db"
+	"github.com/rmrfslashbin/manuals-mcp-server/internal/indexer"
 	"github.com/rmrfslashbin/manuals-mcp-server/pkg/models"
 )
 
@@ -266,10 +268,24 @@ func (s *Server) handleGetInfo(ctx context.Context, request mcp.CallToolRequest)
 
 	// Capabilities
 	output.WriteString("## MCP Capabilities\n\n")
-	output.WriteString("- **Tools:** 9 (search, get_pinout, list_hardware, get_stats, get_info, get_tags, get_categories, get_manufacturers, get_metadata_schema)\n")
+
+	toolList := "search, get_pinout, list_hardware, get_stats, get_info, get_tags, get_categories, get_manufacturers, get_metadata_schema"
+	toolCount := 9
+	if s.docsPath != "" {
+		toolList += ", reindex"
+		toolCount = 10
+	}
+
+	output.WriteString(fmt.Sprintf("- **Tools:** %d (%s)\n", toolCount, toolList))
 	output.WriteString("- **Resources:** 3 templates (device documentation, pinout, guides)\n")
 	output.WriteString("- **Prompts:** 4 templates (wiring-guide, pinout-explain, device-compare, protocol-guide)\n")
 	output.WriteString("- **Transport:** stdio\n")
+
+	if s.docsPath != "" {
+		output.WriteString(fmt.Sprintf("\n**Reindex Available**: ✅ (docs-path: %s)\n", s.docsPath))
+	} else {
+		output.WriteString("\n**Reindex Available**: ❌ (start server with --docs-path to enable)\n")
+	}
 
 	return mcp.NewToolResultText(output.String()), nil
 }
@@ -352,4 +368,55 @@ func pluralize(count int) string {
 		return ""
 	}
 	return "s"
+}
+
+// handleReindex handles the reindex tool.
+func (s *Server) handleReindex(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if s.docsPath == "" {
+		return mcp.NewToolResultError("reindex tool not available: server started without --docs-path"), nil
+	}
+
+	s.logger.Info("starting documentation reindex", "docs_path", s.docsPath)
+
+	// Run indexer
+	result, err := indexer.IndexDocumentation(s.db, indexer.IndexOptions{
+		DocsPath: s.docsPath,
+		Clear:    true,
+		Verbose:  false,
+	}, slog.Default())
+
+	if err != nil {
+		s.logger.Error("reindex failed", "error", err)
+		return mcp.NewToolResultError(fmt.Sprintf("reindex failed: %v", err)), nil
+	}
+
+	s.logger.Info("reindex completed successfully",
+		"total_files", result.TotalFiles,
+		"success", result.SuccessCount,
+		"errors", result.ErrorCount,
+		"duration_ms", result.Duration.Milliseconds(),
+	)
+
+	// Format output
+	var output strings.Builder
+	output.WriteString("# Reindex Complete\n\n")
+	output.WriteString(fmt.Sprintf("✅ Successfully reindexed documentation in %s\n\n", result.Duration))
+	output.WriteString("## Statistics\n\n")
+	output.WriteString(fmt.Sprintf("- **Total files processed**: %d\n", result.TotalFiles))
+	output.WriteString(fmt.Sprintf("- **Successfully indexed**: %d\n", result.SuccessCount))
+	output.WriteString(fmt.Sprintf("- **Errors**: %d\n\n", result.ErrorCount))
+
+	output.WriteString("## Devices by Type\n\n")
+	output.WriteString(fmt.Sprintf("- **Hardware**: %d\n", result.DevicesByType[models.DomainHardware]))
+	output.WriteString(fmt.Sprintf("- **Software**: %d\n", result.DevicesByType[models.DomainSoftware]))
+	output.WriteString(fmt.Sprintf("- **Protocols**: %d\n\n", result.DevicesByType[models.DomainProtocol]))
+
+	output.WriteString("## Guides\n\n")
+	output.WriteString("- **Workflow guides**: 4 (quickstart, workflow, overview, contributing)\n\n")
+
+	if result.ErrorCount > 0 {
+		output.WriteString("⚠️  **Warning**: Some files failed to index. Check server logs for details.\n")
+	}
+
+	return mcp.NewToolResultText(output.String()), nil
 }
