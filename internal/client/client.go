@@ -239,15 +239,6 @@ func (c *Client) ListDocuments(limit, offset int, deviceID string) (*DocumentsRe
 	return &resp, nil
 }
 
-// GetDocument gets a document by ID.
-func (c *Client) GetDocument(id string) (*Document, error) {
-	var resp Document
-	if err := c.get("/documents/"+id, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
 // GetStatus gets the API status.
 func (c *Client) GetStatus() (*StatusResponse, error) {
 	var resp StatusResponse
