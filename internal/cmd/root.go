@@ -29,15 +29,14 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "manuals-mcp",
 	Short: "MCP server for hardware and software documentation",
-	Long: `Manuals MCP Server provides GPIO pinout information, full-text search,
-and device specifications through the Model Context Protocol (MCP).
+	Long: `Manuals MCP Server provides access to hardware and software documentation
+through the Model Context Protocol (MCP).
 
 Features:
-  - GPIO pinout information for hardware devices
-  - Full-text search across documentation using SQLite FTS5
-  - Device specifications and metadata
-  - Cross-platform static binary
-  - No external dependencies`,
+  - Search across documentation using full-text search
+  - Device information, pinouts, and specifications
+  - Document listings
+  - Connects to Manuals REST API for data`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		// Setup logger for all commands
 		return setupLogger()

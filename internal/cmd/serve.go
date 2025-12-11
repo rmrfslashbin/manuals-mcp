@@ -4,15 +4,15 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/rmrfslashbin/manuals-mcp-server/internal/db"
-	"github.com/rmrfslashbin/manuals-mcp-server/internal/mcp"
+	"github.com/rmrfslashbin/manuals-mcp/internal/client"
+	"github.com/rmrfslashbin/manuals-mcp/internal/mcp"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
 var (
-	dbPath   string
-	docsPath string
+	apiURL string
+	apiKey string
 )
 
 // serveCmd represents the serve command.
@@ -21,60 +21,53 @@ var serveCmd = &cobra.Command{
 	Short: "Start the MCP server",
 	Long: `Start the MCP server and listen for requests via stdio.
 
-The server requires a SQLite database with indexed documentation. Use the
-'index' command to create the database before running the server.
+The server connects to the Manuals REST API to serve documentation.
 
 Environment Variables:
-  MANUALS_DB_PATH    - Path to SQLite database (default: ./data/manuals.db)
-  MANUALS_DOCS_PATH  - Path to documentation directory
+  MANUALS_API_URL    - URL of the Manuals REST API (required)
+  MANUALS_API_KEY    - API key for authentication (required)
   MANUALS_LOG_LEVEL  - Log level (debug, info, warn, error)
   MANUALS_LOG_FORMAT - Log format (json, text)
   MANUALS_LOG_OUTPUT - Log output (stderr, /path/to/file, /path/to/dir/)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		logger := slog.Default()
-		dbPath := viper.GetString("db.path")
+
+		apiURL := viper.GetString("api.url")
+		apiKey := viper.GetString("api.key")
+
+		if apiURL == "" {
+			return fmt.Errorf("MANUALS_API_URL is required")
+		}
+		if apiKey == "" {
+			return fmt.Errorf("MANUALS_API_KEY is required")
+		}
 
 		logger.Info("starting MCP server",
 			"version", version,
 			"commit", gitCommit,
-			"db_path", dbPath,
+			"api_url", apiURL,
 		)
 
-		// Initialize database
-		database, err := db.InitDatabase(dbPath)
-		if err != nil {
-			logger.Error("failed to initialize database", "error", err)
-			return fmt.Errorf("failed to initialize database: %w", err)
-		}
-		defer database.Close()
+		// Create API client
+		apiClient := client.New(apiURL, apiKey)
 
-		// Get database stats
-		stats, err := db.GetStats(database)
+		// Test connection by getting status
+		status, err := apiClient.GetStatus()
 		if err != nil {
-			logger.Warn("failed to get database stats", "error", err)
-		} else {
-			logger.Info("database loaded",
-				"total_devices", stats.TotalDevices,
-				"hardware", stats.HardwareCount,
-				"software", stats.SoftwareCount,
-				"protocol", stats.ProtocolCount,
-				"pinouts", stats.TotalPinouts,
-			)
-
-			if stats.TotalDevices == 0 {
-				logger.Warn("database is empty - run 'manuals-mcp index' to populate it")
-			}
+			logger.Error("failed to connect to API", "error", err)
+			return fmt.Errorf("failed to connect to API: %w", err)
 		}
+
+		logger.Info("connected to Manuals API",
+			"api_version", status.APIVersion,
+			"devices", status.Counts.Devices,
+			"documents", status.Counts.Documents,
+		)
 
 		// Create MCP server
-		docsPath := viper.GetString("docs.path")
-		mcpServer := mcp.NewServer(database, docsPath, version, gitCommit, buildTime, logger)
+		mcpServer := mcp.NewServer(apiClient, version, gitCommit, buildTime, logger)
 
-		if docsPath != "" {
-			logger.Info("MCP server ready with reindex capability", "docs_path", docsPath)
-		} else {
-			logger.Info("MCP server ready, listening on stdio")
-		}
+		logger.Info("MCP server ready, listening on stdio")
 
 		// Serve (blocks until shutdown)
 		return mcpServer.Serve(cmd.Context())
@@ -85,10 +78,10 @@ func init() {
 	rootCmd.AddCommand(serveCmd)
 
 	// Serve-specific flags
-	serveCmd.Flags().StringVar(&dbPath, "db-path", "./data/manuals.db", "path to SQLite database")
-	serveCmd.Flags().StringVar(&docsPath, "docs-path", "", "path to documentation directory")
+	serveCmd.Flags().StringVar(&apiURL, "api-url", "", "URL of the Manuals REST API")
+	serveCmd.Flags().StringVar(&apiKey, "api-key", "", "API key for authentication")
 
 	// Bind flags to viper
-	viper.BindPFlag("db.path", serveCmd.Flags().Lookup("db-path"))
-	viper.BindPFlag("docs.path", serveCmd.Flags().Lookup("docs-path"))
+	viper.BindPFlag("api.url", serveCmd.Flags().Lookup("api-url"))
+	viper.BindPFlag("api.key", serveCmd.Flags().Lookup("api-key"))
 }

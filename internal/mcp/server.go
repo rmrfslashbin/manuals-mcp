@@ -3,21 +3,19 @@ package mcp
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/rmrfslashbin/manuals-mcp-server/internal/db"
-	"github.com/rmrfslashbin/manuals-mcp-server/pkg/models"
+	"github.com/rmrfslashbin/manuals-mcp/internal/client"
 )
 
-// Server wraps the MCP server with our database.
+// Server wraps the MCP server with our API client.
 type Server struct {
 	mcp       *server.MCPServer
-	db        *sql.DB
-	docsPath  string
+	client    *client.Client
 	logger    *slog.Logger
 	version   string
 	gitCommit string
@@ -25,23 +23,21 @@ type Server struct {
 }
 
 // NewServer creates a new MCP server instance.
-func NewServer(database *sql.DB, docsPath, version, gitCommit, buildTime string, logger *slog.Logger) *Server {
+func NewServer(apiClient *client.Client, version, gitCommit, buildTime string, logger *slog.Logger) *Server {
 	s := &Server{
-		db:        database,
-		docsPath:  docsPath,
+		client:    apiClient,
 		logger:    logger,
 		version:   version,
 		gitCommit: gitCommit,
 		buildTime: buildTime,
 	}
 
-	// Create MCP server with all capabilities
+	// Create MCP server
 	s.mcp = server.NewMCPServer(
-		"manuals-mcp-server",
+		"manuals-mcp",
 		version,
 		server.WithToolCapabilities(true),
-		server.WithResourceCapabilities(true, true), // subscribe and list
-		server.WithPromptCapabilities(true),
+		server.WithResourceCapabilities(true, true),
 		server.WithLogging(),
 	)
 
@@ -51,100 +47,99 @@ func NewServer(database *sql.DB, docsPath, version, gitCommit, buildTime string,
 	// Register resources
 	s.registerResources()
 
-	// Register prompts
-	s.registerPrompts()
-
 	return s
 }
 
 // registerTools registers all MCP tools.
 func (s *Server) registerTools() {
-	// Tool: get_pinout - Get GPIO pinout information
-	s.mcp.AddTool(mcp.NewTool("get_pinout",
-		mcp.WithDescription("Get GPIO pinout information for a hardware device"),
-		mcp.WithString("device",
-			mcp.Description("Device name or ID (e.g., 'raspberry-pi-4', 'esp32-s3')"),
-			mcp.Required(),
-		),
-		mcp.WithString("interface",
-			mcp.Description("Filter by interface type (optional): i2c, spi, uart, pwm, gpio, all"),
-		),
-	), s.handleGetPinout)
-
 	// Tool: search - Full-text search
-	s.mcp.AddTool(mcp.NewTool("search",
-		mcp.WithDescription("Search across all documentation using full-text search"),
+	s.mcp.AddTool(mcp.NewTool("search_manuals",
+		mcp.WithDescription("Search across hardware and software documentation using full-text search"),
 		mcp.WithString("query",
-			mcp.Description("Search query (supports full-text search)"),
+			mcp.Description("Search query"),
 			mcp.Required(),
 		),
 		mcp.WithString("domain",
-			mcp.Description("Filter by domain (optional): hardware, software, protocol, all"),
+			mcp.Description("Filter by domain: hardware, software, or protocol"),
 		),
 		mcp.WithString("type",
-			mcp.Description("Filter by device type (optional)"),
+			mcp.Description("Filter by device type (e.g., sensors, dev-boards)"),
 		),
 		mcp.WithNumber("limit",
-			mcp.Description("Maximum results to return"),
-			mcp.DefaultNumber(10),
+			mcp.Description("Maximum results to return (default: 10)"),
 		),
 	), s.handleSearch)
 
-	// Tool: list_hardware - List all hardware devices
-	s.mcp.AddTool(mcp.NewTool("list_hardware",
-		mcp.WithDescription("List all available hardware devices organized by category"),
-	), s.handleListHardware)
+	// Tool: get_device - Get device details
+	s.mcp.AddTool(mcp.NewTool("get_device",
+		mcp.WithDescription("Get detailed information about a specific device including content and metadata"),
+		mcp.WithString("device_id",
+			mcp.Description("Device ID"),
+			mcp.Required(),
+		),
+	), s.handleGetDevice)
 
-	// Tool: get_stats - Get database statistics
-	s.mcp.AddTool(mcp.NewTool("get_stats",
-		mcp.WithDescription("Get statistics about the indexed documentation database"),
-	), s.handleGetStats)
+	// Tool: list_devices - List all devices
+	s.mcp.AddTool(mcp.NewTool("list_devices",
+		mcp.WithDescription("List all devices with optional filtering"),
+		mcp.WithString("domain",
+			mcp.Description("Filter by domain: hardware, software, or protocol"),
+		),
+		mcp.WithString("type",
+			mcp.Description("Filter by device type"),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description("Maximum results (default: 50)"),
+		),
+	), s.handleListDevices)
 
-	// Tool: get_info - Get server version and platform information
-	s.mcp.AddTool(mcp.NewTool("get_info",
-		mcp.WithDescription("Get MCP server version, build info, database statistics, and platform capabilities"),
-	), s.handleGetInfo)
+	// Tool: get_pinout - Get GPIO pinout
+	s.mcp.AddTool(mcp.NewTool("get_pinout",
+		mcp.WithDescription("Get GPIO pinout information for a hardware device"),
+		mcp.WithString("device_id",
+			mcp.Description("Device ID"),
+			mcp.Required(),
+		),
+	), s.handleGetPinout)
 
-	// Tool: get_tags - List all unique tags
-	s.mcp.AddTool(mcp.NewTool("get_tags",
-		mcp.WithDescription("List all unique tags from device metadata"),
-	), s.handleGetTags)
+	// Tool: get_specs - Get device specifications
+	s.mcp.AddTool(mcp.NewTool("get_specs",
+		mcp.WithDescription("Get technical specifications for a device"),
+		mcp.WithString("device_id",
+			mcp.Description("Device ID"),
+			mcp.Required(),
+		),
+	), s.handleGetSpecs)
 
-	// Tool: get_categories - List all categories
-	s.mcp.AddTool(mcp.NewTool("get_categories",
-		mcp.WithDescription("List all categories with device counts"),
-	), s.handleGetCategories)
+	// Tool: list_documents - List documents
+	s.mcp.AddTool(mcp.NewTool("list_documents",
+		mcp.WithDescription("List available documents (PDFs, datasheets)"),
+		mcp.WithString("device_id",
+			mcp.Description("Filter by device ID"),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description("Maximum results (default: 50)"),
+		),
+	), s.handleListDocuments)
 
-	// Tool: get_manufacturers - List all manufacturers
-	s.mcp.AddTool(mcp.NewTool("get_manufacturers",
-		mcp.WithDescription("List all manufacturers with device counts"),
-	), s.handleGetManufacturers)
-
-	// Tool: get_metadata_schema - Show metadata schema
-	s.mcp.AddTool(mcp.NewTool("get_metadata_schema",
-		mcp.WithDescription("Show available metadata fields and their types across all devices"),
-	), s.handleGetMetadataSchema)
-
-	// Tool: reindex - Rebuild documentation index (only if docs-path is configured)
-	if s.docsPath != "" {
-		s.mcp.AddTool(mcp.NewTool("reindex",
-			mcp.WithDescription("Rebuild documentation index from source files (requires --docs-path)"),
-		), s.handleReindex)
-	}
+	// Tool: get_status - Get API status
+	s.mcp.AddTool(mcp.NewTool("get_status",
+		mcp.WithDescription("Get Manuals API status and statistics"),
+	), s.handleGetStatus)
 }
 
-// registerResources registers all MCP resources.
+// registerResources registers MCP resources.
 func (s *Server) registerResources() {
-	// Resource template: Access device documentation by ID
+	// Resource template: Device documentation
 	s.mcp.AddResourceTemplate(
 		mcp.NewResourceTemplate(
 			"manuals://device/{device_id}",
-			"Device documentation and specifications",
+			"Device documentation and content",
 		),
 		s.handleDeviceResource,
 	)
 
-	// Resource template: Access device pinouts
+	// Resource template: Device pinout
 	s.mcp.AddResourceTemplate(
 		mcp.NewResourceTemplate(
 			"manuals://device/{device_id}/pinout",
@@ -152,104 +147,239 @@ func (s *Server) registerResources() {
 		),
 		s.handlePinoutResource,
 	)
-
-	// Resource template: Access workflow guides
-	s.mcp.AddResourceTemplate(
-		mcp.NewResourceTemplate(
-			"manuals://guide/{guide_id}",
-			"Workflow and contribution guides (quickstart, workflow, overview, contributing)",
-		),
-		s.handleGuideResource,
-	)
-}
-
-// registerPrompts registers all MCP prompts.
-func (s *Server) registerPrompts() {
-	// Prompt: wiring-guide - Help with GPIO wiring
-	s.mcp.AddPrompt(mcp.NewPrompt("wiring-guide",
-		mcp.WithPromptDescription("Guide for wiring a component to GPIO pins"),
-		mcp.WithArgument("device",
-			mcp.ArgumentDescription("Hardware device (e.g., 'raspberry-pi-4')"),
-			mcp.RequiredArgument(),
-		),
-		mcp.WithArgument("component",
-			mcp.ArgumentDescription("Component to wire (e.g., 'temperature sensor', 'LED')"),
-			mcp.RequiredArgument(),
-		),
-		mcp.WithArgument("interface",
-			mcp.ArgumentDescription("Communication interface (e.g., 'I2C', 'SPI', 'GPIO')"),
-		),
-	), s.handleWiringGuide)
-
-	// Prompt: pinout-explain - Explain a device's pinout
-	s.mcp.AddPrompt(mcp.NewPrompt("pinout-explain",
-		mcp.WithPromptDescription("Get a detailed explanation of a device's pinout configuration"),
-		mcp.WithArgument("device",
-			mcp.ArgumentDescription("Hardware device (e.g., 'esp32-s3')"),
-			mcp.RequiredArgument(),
-		),
-	), s.handlePinoutExplain)
-
-	// Prompt: device-compare - Compare two devices
-	s.mcp.AddPrompt(mcp.NewPrompt("device-compare",
-		mcp.WithPromptDescription("Compare specifications and features of two devices"),
-		mcp.WithArgument("device1",
-			mcp.ArgumentDescription("First device name or ID"),
-			mcp.RequiredArgument(),
-		),
-		mcp.WithArgument("device2",
-			mcp.ArgumentDescription("Second device name or ID"),
-			mcp.RequiredArgument(),
-		),
-	), s.handleDeviceCompare)
-
-	// Prompt: protocol-guide - Guide for implementing a protocol
-	s.mcp.AddPrompt(mcp.NewPrompt("protocol-guide",
-		mcp.WithPromptDescription("Get implementation guidance for a communication protocol"),
-		mcp.WithArgument("protocol",
-			mcp.ArgumentDescription("Protocol name (e.g., 'MQTT', 'I2C', 'SPI')"),
-			mcp.RequiredArgument(),
-		),
-		mcp.WithArgument("platform",
-			mcp.ArgumentDescription("Target platform (optional)"),
-		),
-	), s.handleProtocolGuide)
 }
 
 // Serve starts the MCP server with stdio transport.
 func (s *Server) Serve(ctx context.Context) error {
 	s.logger.Info("starting MCP server with stdio transport")
-
-	// Serve with stdio transport (default for MCP)
 	return server.ServeStdio(s.mcp)
 }
 
-// findDeviceByNameOrID attempts to find a device by exact ID or partial name match.
-func (s *Server) findDeviceByNameOrID(ctx context.Context, nameOrID string) (*models.Device, error) {
-	// Try exact ID first
-	device, err := db.GetDevice(s.db, nameOrID)
+// Tool handlers
+
+func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	query, _ := args["query"].(string)
+	domain, _ := args["domain"].(string)
+	deviceType, _ := args["type"].(string)
+	limit := 10
+	if l, ok := args["limit"].(float64); ok {
+		limit = int(l)
+	}
+
+	results, err := s.client.Search(query, limit, domain, deviceType)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Found %d results for \"%s\":\n\n", results.Total, results.Query))
+
+	for _, r := range results.Results {
+		sb.WriteString(fmt.Sprintf("**%s** (ID: %s)\n", r.Name, r.DeviceID))
+		sb.WriteString(fmt.Sprintf("  Domain: %s | Type: %s | Score: %.2f\n", r.Domain, r.Type, r.Score))
+		if r.Snippet != "" {
+			sb.WriteString(fmt.Sprintf("  %s\n", r.Snippet))
+		}
+		sb.WriteString("\n")
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleGetDevice(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	deviceID, _ := args["device_id"].(string)
+
+	device, err := s.client.GetDevice(deviceID)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get device: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# %s\n\n", device.Name))
+	sb.WriteString(fmt.Sprintf("**ID:** %s\n", device.ID))
+	sb.WriteString(fmt.Sprintf("**Domain:** %s\n", device.Domain))
+	sb.WriteString(fmt.Sprintf("**Type:** %s\n", device.Type))
+	sb.WriteString(fmt.Sprintf("**Path:** %s\n", device.Path))
+	sb.WriteString(fmt.Sprintf("**Indexed:** %s\n\n", device.IndexedAt))
+
+	if device.Content != "" {
+		sb.WriteString("## Content\n\n")
+		sb.WriteString(device.Content)
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleListDevices(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	domain, _ := args["domain"].(string)
+	deviceType, _ := args["type"].(string)
+	limit := 50
+	if l, ok := args["limit"].(float64); ok {
+		limit = int(l)
+	}
+
+	result, err := s.client.ListDevices(limit, 0, domain, deviceType)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to list devices: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Showing %d of %d devices:\n\n", len(result.Data), result.Total))
+
+	for _, d := range result.Data {
+		sb.WriteString(fmt.Sprintf("- **%s** (ID: %s) - %s/%s\n", d.Name, d.ID, d.Domain, d.Type))
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleGetPinout(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	deviceID, _ := args["device_id"].(string)
+
+	pinout, err := s.client.GetDevicePinout(deviceID)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get pinout: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# Pinout for %s\n\n", pinout.Name))
+	sb.WriteString("| Pin | GPIO | Name | Description |\n")
+	sb.WriteString("|-----|------|------|-------------|\n")
+
+	for _, pin := range pinout.Pins {
+		gpio := "-"
+		if pin.GPIONum != nil {
+			gpio = fmt.Sprintf("%d", *pin.GPIONum)
+		}
+		sb.WriteString(fmt.Sprintf("| %d | %s | %s | %s |\n", pin.PhysicalPin, gpio, pin.Name, pin.Description))
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleGetSpecs(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	deviceID, _ := args["device_id"].(string)
+
+	specs, err := s.client.GetDeviceSpecs(deviceID)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get specs: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# Specifications for %s\n\n", specs.Name))
+
+	for key, value := range specs.Specs {
+		sb.WriteString(fmt.Sprintf("- **%s:** %s\n", key, value))
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleListDocuments(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	deviceID, _ := args["device_id"].(string)
+	limit := 50
+	if l, ok := args["limit"].(float64); ok {
+		limit = int(l)
+	}
+
+	result, err := s.client.ListDocuments(limit, 0, deviceID)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to list documents: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Found %d documents:\n\n", result.Total))
+
+	for _, d := range result.Data {
+		size := float64(d.SizeBytes) / 1024
+		sb.WriteString(fmt.Sprintf("- **%s** (ID: %s) - %.1f KB\n", d.Filename, d.ID, size))
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleGetStatus(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	status, err := s.client.GetStatus()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get status: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString("# Manuals API Status\n\n")
+	sb.WriteString(fmt.Sprintf("- **Status:** %s\n", status.Status))
+	sb.WriteString(fmt.Sprintf("- **API Version:** %s\n", status.APIVersion))
+	sb.WriteString(fmt.Sprintf("- **Server Version:** %s\n", status.Version))
+	sb.WriteString(fmt.Sprintf("- **Devices:** %d\n", status.Counts.Devices))
+	sb.WriteString(fmt.Sprintf("- **Documents:** %d\n", status.Counts.Documents))
+	if status.LastReindex != "" {
+		sb.WriteString(fmt.Sprintf("- **Last Reindex:** %s\n", status.LastReindex))
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// Resource handlers
+
+func (s *Server) handleDeviceResource(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	// Extract device_id from URI: manuals://device/{device_id}
+	uri := request.Params.URI
+	parts := strings.Split(uri, "/")
+	if len(parts) < 4 {
+		return nil, fmt.Errorf("invalid resource URI: %s", uri)
+	}
+	deviceID := parts[3]
+
+	device, err := s.client.GetDevice(deviceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get device: %w", err)
 	}
-	if device != nil {
-		return device, nil
-	}
 
-	// Try searching by name
-	opts := models.SearchOptions{
-		Query:  nameOrID,
-		Limit:  1,
-		Offset: 0,
+	content := fmt.Sprintf("# %s\n\n%s", device.Name, device.Content)
+
+	return []mcp.ResourceContents{
+		mcp.TextResourceContents{
+			URI:      uri,
+			MIMEType: "text/markdown",
+			Text:     content,
+		},
+	}, nil
+}
+
+func (s *Server) handlePinoutResource(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	// Extract device_id from URI: manuals://device/{device_id}/pinout
+	uri := request.Params.URI
+	parts := strings.Split(uri, "/")
+	if len(parts) < 4 {
+		return nil, fmt.Errorf("invalid resource URI: %s", uri)
 	}
-	results, err := db.SearchDevices(s.db, opts)
+	deviceID := parts[3]
+
+	pinout, err := s.client.GetDevicePinout(deviceID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to search devices: %w", err)
+		return nil, fmt.Errorf("failed to get pinout: %w", err)
 	}
 
-	if len(results) == 0 {
-		return nil, fmt.Errorf("device not found: %s", nameOrID)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# Pinout for %s\n\n", pinout.Name))
+	for _, pin := range pinout.Pins {
+		gpio := "N/A"
+		if pin.GPIONum != nil {
+			gpio = fmt.Sprintf("GPIO%d", *pin.GPIONum)
+		}
+		sb.WriteString(fmt.Sprintf("Pin %d: %s (%s) - %s\n", pin.PhysicalPin, pin.Name, gpio, pin.Description))
 	}
 
-	// Get full device info
-	return db.GetDevice(s.db, results[0].ID)
+	return []mcp.ResourceContents{
+		mcp.TextResourceContents{
+			URI:      uri,
+			MIMEType: "text/markdown",
+			Text:     sb.String(),
+		},
+	}, nil
 }

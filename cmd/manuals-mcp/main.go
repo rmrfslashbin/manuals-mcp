@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/rmrfslashbin/manuals-mcp-server/internal/cmd"
+	"github.com/rmrfslashbin/manuals-mcp/internal/cmd"
 )
 
 // Build information (set via ldflags during build)
