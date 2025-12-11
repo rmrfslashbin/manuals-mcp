@@ -81,6 +81,16 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
 	tags,
 	tokenize='porter unicode61'
 );
+
+-- Guides table (workflow documentation, quick starts, etc.)
+CREATE TABLE IF NOT EXISTS guides (
+	id TEXT PRIMARY KEY,
+	title TEXT NOT NULL,
+	content TEXT NOT NULL,
+	indexed_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_guides_title ON guides(title);
 `
 
 // InitDatabase creates and initializes a SQLite database with the schema.
@@ -121,6 +131,7 @@ func ClearDatabase(db *sql.DB) error {
 		"DELETE FROM specifications",
 		"DELETE FROM pinouts",
 		"DELETE FROM devices",
+		"DELETE FROM guides",
 	}
 
 	for _, stmt := range statements {

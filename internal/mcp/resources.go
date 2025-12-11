@@ -132,3 +132,30 @@ func (s *Server) handlePinoutResource(ctx context.Context, request mcp.ReadResou
 	}, nil
 }
 
+// handleGuideResource handles reading workflow guides.
+func (s *Server) handleGuideResource(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	// Extract guide_id from URI: manuals://guide/{guide_id}
+	uri := request.Params.URI
+	parts := strings.Split(uri, "/")
+	if len(parts) < 3 {
+		return nil, fmt.Errorf("invalid resource URI: %s", uri)
+	}
+	guideID := parts[len(parts)-1]
+
+	// Get guide from database
+	title, content, err := db.GetGuide(s.db, guideID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get guide: %w", err)
+	}
+
+	// Add a header with the title
+	fullContent := fmt.Sprintf("# %s\n\n%s", title, content)
+
+	return []mcp.ResourceContents{
+		mcp.TextResourceContents{
+			URI:      uri,
+			MIMEType: "text/markdown",
+			Text:     fullContent,
+		},
+	}, nil
+}

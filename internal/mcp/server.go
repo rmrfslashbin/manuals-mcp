@@ -143,6 +143,15 @@ func (s *Server) registerResources() {
 		),
 		s.handlePinoutResource,
 	)
+
+	// Resource template: Access workflow guides
+	s.mcp.AddResourceTemplate(
+		mcp.NewResourceTemplate(
+			"manuals://guide/{guide_id}",
+			"Workflow and contribution guides (quickstart, workflow, overview, contributing)",
+		),
+		s.handleGuideResource,
+	)
 }
 
 // registerPrompts registers all MCP prompts.

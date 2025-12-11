@@ -518,3 +518,57 @@ func FindPinoutsByInterface(db *sql.DB, deviceID, interfaceType string) ([]model
 
 	return pinouts, rows.Err()
 }
+
+// InsertGuide inserts or replaces a guide in the database.
+func InsertGuide(db *sql.DB, id, title, content string) error {
+	_, err := db.Exec(`
+		INSERT OR REPLACE INTO guides (id, title, content)
+		VALUES (?, ?, ?)
+	`, id, title, content)
+	if err != nil {
+		return fmt.Errorf("failed to insert guide: %w", err)
+	}
+	return nil
+}
+
+// GetGuide retrieves a guide by ID.
+func GetGuide(db *sql.DB, id string) (title, content string, err error) {
+	err = db.QueryRow(`
+		SELECT title, content
+		FROM guides
+		WHERE id = ?
+	`, id).Scan(&title, &content)
+
+	if err == sql.ErrNoRows {
+		return "", "", fmt.Errorf("guide not found: %s", id)
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get guide: %w", err)
+	}
+
+	return title, content, nil
+}
+
+// ListGuides retrieves all guides.
+func ListGuides(db *sql.DB) (map[string]string, error) {
+	rows, err := db.Query(`
+		SELECT id, title
+		FROM guides
+		ORDER BY id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list guides: %w", err)
+	}
+	defer rows.Close()
+
+	guides := make(map[string]string)
+	for rows.Next() {
+		var id, title string
+		if err := rows.Scan(&id, &title); err != nil {
+			return nil, fmt.Errorf("failed to scan guide: %w", err)
+		}
+		guides[id] = title
+	}
+
+	return guides, rows.Err()
+}

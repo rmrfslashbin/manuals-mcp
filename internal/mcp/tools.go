@@ -267,7 +267,7 @@ func (s *Server) handleGetInfo(ctx context.Context, request mcp.CallToolRequest)
 	// Capabilities
 	output.WriteString("## MCP Capabilities\n\n")
 	output.WriteString("- **Tools:** 9 (search, get_pinout, list_hardware, get_stats, get_info, get_tags, get_categories, get_manufacturers, get_metadata_schema)\n")
-	output.WriteString("- **Resources:** 2 templates (device documentation, pinout)\n")
+	output.WriteString("- **Resources:** 3 templates (device documentation, pinout, guides)\n")
 	output.WriteString("- **Prompts:** 4 templates (wiring-guide, pinout-explain, device-compare, protocol-guide)\n")
 	output.WriteString("- **Transport:** stdio\n")
 

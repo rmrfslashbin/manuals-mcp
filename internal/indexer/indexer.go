@@ -133,6 +133,15 @@ func IndexDocumentation(database *sql.DB, opts IndexOptions, logger *slog.Logger
 		return nil, fmt.Errorf("failed to walk directory: %w", err)
 	}
 
+	// Index guides
+	logger.Info("indexing workflow guides")
+	guidesIndexed, err := indexGuides(database, opts.DocsPath, logger)
+	if err != nil {
+		logger.Warn("failed to index guides", "error", err)
+	} else {
+		logger.Info("indexed guides", "count", guidesIndexed)
+	}
+
 	result.Duration = time.Since(startTime)
 
 	// Log summary
@@ -143,6 +152,7 @@ func IndexDocumentation(database *sql.DB, opts IndexOptions, logger *slog.Logger
 		"hardware", result.DevicesByType[models.DomainHardware],
 		"software", result.DevicesByType[models.DomainSoftware],
 		"protocol", result.DevicesByType[models.DomainProtocol],
+		"guides", guidesIndexed,
 		"duration_ms", result.Duration.Milliseconds(),
 	)
 
@@ -165,4 +175,48 @@ func getDeviceName(metadata map[string]interface{}) string {
 
 	// Fallback
 	return "Unknown"
+}
+
+// indexGuides indexes workflow guides into the database.
+func indexGuides(database *sql.DB, docsPath string, logger *slog.Logger) (int, error) {
+	// Define guides to index
+	guides := []struct {
+		id       string
+		filename string
+		title    string
+	}{
+		{"quickstart", "QUICKSTART.md", "Quick Start Guide"},
+		{"workflow", "WORKFLOW_ADD_HARDWARE.md", "Add Hardware Workflow"},
+		{"overview", "README.md", "Repository Overview"},
+		{"contributing", "CONTRIBUTING.md", "Contributing Guide"},
+	}
+
+	count := 0
+	for _, guide := range guides {
+		path := filepath.Join(docsPath, guide.filename)
+
+		// Check if file exists
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			logger.Debug("guide file not found, skipping", "file", guide.filename)
+			continue
+		}
+
+		// Read file content
+		content, err := os.ReadFile(path)
+		if err != nil {
+			logger.Warn("failed to read guide file", "file", guide.filename, "error", err)
+			continue
+		}
+
+		// Insert into database
+		if err := db.InsertGuide(database, guide.id, guide.title, string(content)); err != nil {
+			logger.Warn("failed to insert guide", "id", guide.id, "error", err)
+			continue
+		}
+
+		logger.Debug("indexed guide", "id", guide.id, "title", guide.title, "size", len(content))
+		count++
+	}
+
+	return count, nil
 }
