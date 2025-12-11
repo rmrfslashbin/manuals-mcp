@@ -12,21 +12,41 @@ A Model Context Protocol (MCP) server for hardware and software documentation, p
 
 ## Installation
 
+### Quick Install (Recommended)
+
+The install script automatically detects your platform and downloads the correct binary:
+
+```bash
+# Using wget
+wget -qO- https://raw.githubusercontent.com/rmrfslashbin/manuals-mcp/main/install.sh | sh
+
+# Using curl
+curl -fsSL https://raw.githubusercontent.com/rmrfslashbin/manuals-mcp/main/install.sh | sh
+```
+
+The binary will be installed in the current directory. Move it to your PATH:
+
+```bash
+sudo mv manuals-mcp /usr/local/bin/
+# or
+mv manuals-mcp ~/.local/bin/
+```
+
 ### Via Binary Release
 
-Download the appropriate binary for your platform from the [releases page](https://github.com/rmrfslashbin/manuals-mcp-server/releases):
+Download the appropriate binary for your platform from the [releases page](https://github.com/rmrfslashbin/manuals-mcp/releases):
 
 ```bash
 # macOS ARM64 (Apple Silicon)
-curl -L https://github.com/rmrfslashbin/manuals-mcp-server/releases/latest/download/manuals-mcp-darwin-arm64 -o manuals-mcp
+curl -L https://github.com/rmrfslashbin/manuals-mcp/releases/latest/download/manuals-mcp-darwin-arm64 -o manuals-mcp
 chmod +x manuals-mcp
 
 # macOS AMD64 (Intel)
-curl -L https://github.com/rmrfslashbin/manuals-mcp-server/releases/latest/download/manuals-mcp-darwin-amd64 -o manuals-mcp
+curl -L https://github.com/rmrfslashbin/manuals-mcp/releases/latest/download/manuals-mcp-darwin-amd64 -o manuals-mcp
 chmod +x manuals-mcp
 
 # Linux AMD64
-curl -L https://github.com/rmrfslashbin/manuals-mcp-server/releases/latest/download/manuals-mcp-linux-amd64 -o manuals-mcp
+curl -L https://github.com/rmrfslashbin/manuals-mcp/releases/latest/download/manuals-mcp-linux-amd64 -o manuals-mcp
 chmod +x manuals-mcp
 ```
 
