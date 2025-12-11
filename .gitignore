@@ -5,6 +5,7 @@
 *.so
 *.dylib
 bin/
+manuals-mcp
 
 # Test binary, built with `go test -c`
 *.test
