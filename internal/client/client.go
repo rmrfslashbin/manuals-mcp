@@ -184,9 +184,13 @@ func (c *Client) ListDevices(limit, offset int, domain, deviceType string) (*Dev
 }
 
 // GetDevice gets a device by ID.
-func (c *Client) GetDevice(id string) (*Device, error) {
+func (c *Client) GetDevice(id string, includeContent bool) (*Device, error) {
+	path := "/devices/" + id
+	if includeContent {
+		path += "?content=true"
+	}
 	var resp Device
-	if err := c.get("/devices/"+id, &resp); err != nil {
+	if err := c.get(path, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil

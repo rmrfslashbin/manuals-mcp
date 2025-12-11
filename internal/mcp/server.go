@@ -191,7 +191,7 @@ func (s *Server) handleGetDevice(ctx context.Context, request mcp.CallToolReques
 	args := request.GetArguments()
 	deviceID, _ := args["device_id"].(string)
 
-	device, err := s.client.GetDevice(deviceID)
+	device, err := s.client.GetDevice(deviceID, true)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to get device: %v", err)), nil
 	}
@@ -335,7 +335,7 @@ func (s *Server) handleDeviceResource(ctx context.Context, request mcp.ReadResou
 	}
 	deviceID := parts[3]
 
-	device, err := s.client.GetDevice(deviceID)
+	device, err := s.client.GetDevice(deviceID, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get device: %w", err)
 	}
