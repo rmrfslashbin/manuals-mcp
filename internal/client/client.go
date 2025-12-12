@@ -2,9 +2,11 @@
 package client
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"time"
@@ -134,6 +136,68 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
+// User represents the current authenticated user.
+type User struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Role       string `json:"role"`
+	CreatedAt  string `json:"created_at"`
+	LastSeenAt string `json:"last_seen_at"`
+	IsActive   bool   `json:"is_active"`
+}
+
+// MeResponse is the response from the /me endpoint.
+type MeResponse struct {
+	User User `json:"user"`
+}
+
+// ReindexResponse is the response from triggering a reindex.
+type ReindexResponse struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+// ReindexStatusResponse is the response from the reindex status endpoint.
+type ReindexStatusResponse struct {
+	Status        string `json:"status"`
+	StartedAt     string `json:"started_at,omitempty"`
+	Elapsed       string `json:"elapsed,omitempty"`
+	LastCompleted string `json:"last_completed,omitempty"`
+	LastRun       *struct {
+		DevicesIndexed   int    `json:"devices_indexed"`
+		DocumentsIndexed int    `json:"documents_indexed"`
+		Errors           int    `json:"errors"`
+		Duration         string `json:"duration"`
+	} `json:"last_run,omitempty"`
+}
+
+// UsersResponse is the response from the list users endpoint.
+type UsersResponse struct {
+	Users []User `json:"users"`
+	Count int    `json:"count"`
+}
+
+// CreateUserRequest is the request to create a new user.
+type CreateUserRequest struct {
+	Name string `json:"name"`
+	Role string `json:"role"`
+}
+
+// CreateUserResponse is the response from creating a user.
+type CreateUserResponse struct {
+	User    User   `json:"user"`
+	APIKey  string `json:"api_key"`
+	Message string `json:"message"`
+}
+
+// UploadResponse is the response from uploading a file.
+type UploadResponse struct {
+	Message  string `json:"message"`
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+	Filename string `json:"filename"`
+}
+
 // Search searches for devices.
 func (c *Client) Search(query string, limit int, domain, deviceType string) (*SearchResponse, error) {
 	params := url.Values{}
@@ -248,13 +312,173 @@ func (c *Client) GetStatus() (*StatusResponse, error) {
 	return &resp, nil
 }
 
+// GetMe gets the current authenticated user.
+// Returns nil if not authenticated (anonymous mode).
+func (c *Client) GetMe() (*User, error) {
+	if c.apiKey == "" {
+		return nil, nil
+	}
+	var resp MeResponse
+	if err := c.get("/me", &resp); err != nil {
+		return nil, err
+	}
+	return &resp.User, nil
+}
+
+// HasAPIKey returns true if an API key is configured.
+func (c *Client) HasAPIKey() bool {
+	return c.apiKey != ""
+}
+
+// GetAPIURL returns the configured API URL.
+func (c *Client) GetAPIURL() string {
+	return c.baseURL
+}
+
+// TriggerReindex triggers a reindex of the documentation.
+// Requires RW or Admin role.
+func (c *Client) TriggerReindex() (*ReindexResponse, error) {
+	var resp ReindexResponse
+	if err := c.post("/rw/reindex", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// GetReindexStatus gets the current reindex status.
+// Requires RW or Admin role.
+func (c *Client) GetReindexStatus() (*ReindexStatusResponse, error) {
+	var resp ReindexStatusResponse
+	if err := c.get("/rw/reindex/status", &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// UploadFile uploads a file to the documentation storage.
+// Requires RW or Admin role.
+func (c *Client) UploadFile(destPath string, filename string, content []byte) (*UploadResponse, error) {
+	// Create multipart form
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	// Add the path field
+	if err := writer.WriteField("path", destPath); err != nil {
+		return nil, fmt.Errorf("failed to write path field: %w", err)
+	}
+
+	// Add the file
+	part, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create form file: %w", err)
+	}
+	if _, err := part.Write(content); err != nil {
+		return nil, fmt.Errorf("failed to write file content: %w", err)
+	}
+
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close multipart writer: %w", err)
+	}
+
+	// Create request
+	req, err := http.NewRequest("POST", c.baseURL+"/api/"+APIVersion+"/rw/upload", &buf)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if c.apiKey != "" {
+		req.Header.Set("X-API-Key", c.apiKey)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		var errResp ErrorResponse
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, string(body))
+		}
+		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, errResp.Error)
+	}
+
+	var result UploadResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// ListUsers lists all users.
+// Requires Admin role.
+func (c *Client) ListUsers() (*UsersResponse, error) {
+	var resp UsersResponse
+	if err := c.get("/admin/users", &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// CreateUser creates a new user.
+// Requires Admin role.
+func (c *Client) CreateUser(name, role string) (*CreateUserResponse, error) {
+	req := CreateUserRequest{Name: name, Role: role}
+	var resp CreateUserResponse
+	if err := c.post("/admin/users", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// DeleteUser deletes a user by ID.
+// Requires Admin role.
+func (c *Client) DeleteUser(id string) error {
+	var resp map[string]string
+	if err := c.delete("/admin/users/"+id, &resp); err != nil {
+		return err
+	}
+	return nil
+}
+
+// UpdateUserRole updates a user's role.
+// Requires Admin role.
+func (c *Client) UpdateUserRole(id, role string) error {
+	req := map[string]string{"role": role}
+	var resp map[string]string
+	if err := c.put("/admin/users/"+id+"/role", req, &resp); err != nil {
+		return err
+	}
+	return nil
+}
+
+// RotateAPIKey rotates a user's API key.
+// Requires Admin role.
+func (c *Client) RotateAPIKey(id string) (string, error) {
+	var resp struct {
+		APIKey  string `json:"api_key"`
+		Message string `json:"message"`
+	}
+	if err := c.post("/admin/users/"+id+"/rotate-key", nil, &resp); err != nil {
+		return "", err
+	}
+	return resp.APIKey, nil
+}
+
 // get performs a GET request and decodes the JSON response.
 func (c *Client) get(path string, result interface{}) error {
 	req, err := http.NewRequest("GET", c.baseURL+"/api/"+APIVersion+path, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("X-API-Key", c.apiKey)
+	// Only add API key header if configured (allows anonymous access)
+	if c.apiKey != "" {
+		req.Header.Set("X-API-Key", c.apiKey)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -273,6 +497,69 @@ func (c *Client) get(path string, result interface{}) error {
 
 	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
 		return fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return nil
+}
+
+// post performs a POST request and decodes the JSON response.
+func (c *Client) post(path string, body interface{}, result interface{}) error {
+	return c.doJSON("POST", path, body, result)
+}
+
+// put performs a PUT request and decodes the JSON response.
+func (c *Client) put(path string, body interface{}, result interface{}) error {
+	return c.doJSON("PUT", path, body, result)
+}
+
+// delete performs a DELETE request and decodes the JSON response.
+func (c *Client) delete(path string, result interface{}) error {
+	return c.doJSON("DELETE", path, nil, result)
+}
+
+// doJSON performs an HTTP request with JSON body and decodes the JSON response.
+func (c *Client) doJSON(method, path string, body interface{}, result interface{}) error {
+	var reqBody io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("failed to marshal request body: %w", err)
+		}
+		reqBody = bytes.NewReader(data)
+	}
+
+	req, err := http.NewRequest(method, c.baseURL+"/api/"+APIVersion+path, reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if c.apiKey != "" {
+		req.Header.Set("X-API-Key", c.apiKey)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Accept success status codes
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var errResp ErrorResponse
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			respBody, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("API error (%d): %s", resp.StatusCode, string(respBody))
+		}
+		return fmt.Errorf("API error (%d): %s", resp.StatusCode, errResp.Error)
+	}
+
+	if result != nil {
+		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+			return fmt.Errorf("failed to decode response: %w", err)
+		}
 	}
 
 	return nil

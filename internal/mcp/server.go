@@ -3,6 +3,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -126,6 +127,72 @@ func (s *Server) registerTools() {
 	s.mcp.AddTool(mcp.NewTool("get_status",
 		mcp.WithDescription("Get Manuals API status and statistics"),
 	), s.handleGetStatus)
+
+	// Tool: info - Get MCP server information
+	s.mcp.AddTool(mcp.NewTool("info",
+		mcp.WithDescription("Get MCP server version, build info, and connection status"),
+	), s.handleInfo)
+
+	// RW Tools (require RW or Admin role)
+
+	// Tool: trigger_reindex - Trigger documentation reindex
+	s.mcp.AddTool(mcp.NewTool("trigger_reindex",
+		mcp.WithDescription("Trigger a reindex of the documentation. Requires RW or Admin role."),
+	), s.handleTriggerReindex)
+
+	// Tool: get_reindex_status - Get reindex status
+	s.mcp.AddTool(mcp.NewTool("get_reindex_status",
+		mcp.WithDescription("Get the current reindex status. Requires RW or Admin role."),
+	), s.handleGetReindexStatus)
+
+	// Tool: upload_file - Upload a file to documentation storage
+	s.mcp.AddTool(mcp.NewTool("upload_file",
+		mcp.WithDescription("Upload a file to the documentation storage. Requires RW or Admin role."),
+		mcp.WithString("path",
+			mcp.Description("Destination path relative to docs root (e.g., 'sensors/environmental/bme680/BME680_Reference.md')"),
+			mcp.Required(),
+		),
+		mcp.WithString("filename",
+			mcp.Description("The filename for the uploaded file"),
+			mcp.Required(),
+		),
+		mcp.WithString("content",
+			mcp.Description("The file content (text files) or base64-encoded content (binary files)"),
+			mcp.Required(),
+		),
+		mcp.WithBoolean("base64",
+			mcp.Description("If true, content is base64-encoded (for binary files like PDFs)"),
+		),
+	), s.handleUploadFile)
+
+	// Admin Tools (require Admin role)
+
+	// Tool: list_users - List all users
+	s.mcp.AddTool(mcp.NewTool("list_users",
+		mcp.WithDescription("List all users. Requires Admin role."),
+	), s.handleListUsers)
+
+	// Tool: create_user - Create a new user
+	s.mcp.AddTool(mcp.NewTool("create_user",
+		mcp.WithDescription("Create a new user. Requires Admin role. Returns the API key (save it, won't be shown again)."),
+		mcp.WithString("name",
+			mcp.Description("User name"),
+			mcp.Required(),
+		),
+		mcp.WithString("role",
+			mcp.Description("User role: 'admin', 'rw', or 'ro'"),
+			mcp.Required(),
+		),
+	), s.handleCreateUser)
+
+	// Tool: delete_user - Delete a user
+	s.mcp.AddTool(mcp.NewTool("delete_user",
+		mcp.WithDescription("Delete a user by ID. Requires Admin role."),
+		mcp.WithString("user_id",
+			mcp.Description("User ID to delete"),
+			mcp.Required(),
+		),
+	), s.handleDeleteUser)
 }
 
 // registerResources registers MCP resources.
@@ -322,6 +389,178 @@ func (s *Server) handleGetStatus(ctx context.Context, request mcp.CallToolReques
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleInfo(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var sb strings.Builder
+
+	// MCP Server info
+	sb.WriteString("# Manuals MCP Server\n\n")
+	sb.WriteString("## Server Info\n\n")
+	sb.WriteString(fmt.Sprintf("- **Version:** %s\n", s.version))
+	sb.WriteString(fmt.Sprintf("- **Git Commit:** %s\n", s.gitCommit))
+	sb.WriteString(fmt.Sprintf("- **Build Time:** %s\n", s.buildTime))
+	sb.WriteString("- **Project:** github.com/rmrfslashbin/manuals-mcp\n")
+	sb.WriteString("- **License:** MIT\n\n")
+
+	// API Connection info
+	sb.WriteString("## API Connection\n\n")
+	sb.WriteString(fmt.Sprintf("- **API URL:** %s\n", s.client.GetAPIURL()))
+
+	// Get API status
+	status, err := s.client.GetStatus()
+	if err != nil {
+		sb.WriteString(fmt.Sprintf("- **Status:** Error (%v)\n", err))
+	} else {
+		sb.WriteString(fmt.Sprintf("- **Status:** %s\n", status.Status))
+		sb.WriteString(fmt.Sprintf("- **API Version:** %s\n", status.APIVersion))
+		sb.WriteString(fmt.Sprintf("- **Devices:** %d\n", status.Counts.Devices))
+		sb.WriteString(fmt.Sprintf("- **Documents:** %d\n", status.Counts.Documents))
+	}
+	sb.WriteString("\n")
+
+	// Authentication info
+	sb.WriteString("## Authentication\n\n")
+	if s.client.HasAPIKey() {
+		sb.WriteString("- **Mode:** Authenticated\n")
+		user, err := s.client.GetMe()
+		if err != nil {
+			sb.WriteString(fmt.Sprintf("- **User:** Error fetching user info (%v)\n", err))
+		} else if user != nil {
+			sb.WriteString(fmt.Sprintf("- **User:** %s\n", user.Name))
+			sb.WriteString(fmt.Sprintf("- **Role:** %s\n", user.Role))
+			sb.WriteString(fmt.Sprintf("- **Active:** %t\n", user.IsActive))
+		}
+	} else {
+		sb.WriteString("- **Mode:** Anonymous (read-only)\n")
+		sb.WriteString("- **Access:** Read-only access to documentation\n")
+		sb.WriteString("- **Note:** Admin features unavailable without API key\n")
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// RW tool handlers
+
+func (s *Server) handleTriggerReindex(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	resp, err := s.client.TriggerReindex()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to trigger reindex: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("# Reindex Triggered\n\n- **Status:** %s\n- **Message:** %s\n", resp.Status, resp.Message)), nil
+}
+
+func (s *Server) handleGetReindexStatus(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	resp, err := s.client.GetReindexStatus()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get reindex status: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString("# Reindex Status\n\n")
+	sb.WriteString(fmt.Sprintf("- **Status:** %s\n", resp.Status))
+
+	if resp.StartedAt != "" {
+		sb.WriteString(fmt.Sprintf("- **Started At:** %s\n", resp.StartedAt))
+	}
+	if resp.Elapsed != "" {
+		sb.WriteString(fmt.Sprintf("- **Elapsed:** %s\n", resp.Elapsed))
+	}
+	if resp.LastCompleted != "" {
+		sb.WriteString(fmt.Sprintf("- **Last Completed:** %s\n", resp.LastCompleted))
+	}
+
+	if resp.LastRun != nil {
+		sb.WriteString("\n## Last Run Stats\n\n")
+		sb.WriteString(fmt.Sprintf("- **Devices Indexed:** %d\n", resp.LastRun.DevicesIndexed))
+		sb.WriteString(fmt.Sprintf("- **Documents Indexed:** %d\n", resp.LastRun.DocumentsIndexed))
+		sb.WriteString(fmt.Sprintf("- **Errors:** %d\n", resp.LastRun.Errors))
+		sb.WriteString(fmt.Sprintf("- **Duration:** %s\n", resp.LastRun.Duration))
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleUploadFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	path, _ := args["path"].(string)
+	filename, _ := args["filename"].(string)
+	content, _ := args["content"].(string)
+	isBase64, _ := args["base64"].(bool)
+
+	var fileContent []byte
+	if isBase64 {
+		decoded, err := base64.StdEncoding.DecodeString(content)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to decode base64 content: %v", err)), nil
+		}
+		fileContent = decoded
+	} else {
+		fileContent = []byte(content)
+	}
+
+	resp, err := s.client.UploadFile(path, filename, fileContent)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to upload file: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("# File Uploaded\n\n- **Path:** %s\n- **Filename:** %s\n- **Size:** %d bytes\n", resp.Path, resp.Filename, resp.Size)), nil
+}
+
+// Admin tool handlers
+
+func (s *Server) handleListUsers(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	resp, err := s.client.ListUsers()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to list users: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# Users (%d)\n\n", resp.Count))
+	sb.WriteString("| ID | Name | Role | Active | Created |\n")
+	sb.WriteString("|-----|------|------|--------|--------|\n")
+
+	for _, u := range resp.Users {
+		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %t | %s |\n",
+			u.ID, u.Name, u.Role, u.IsActive, u.CreatedAt))
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleCreateUser(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	name, _ := args["name"].(string)
+	role, _ := args["role"].(string)
+
+	resp, err := s.client.CreateUser(name, role)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to create user: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString("# User Created\n\n")
+	sb.WriteString(fmt.Sprintf("- **ID:** %s\n", resp.User.ID))
+	sb.WriteString(fmt.Sprintf("- **Name:** %s\n", resp.User.Name))
+	sb.WriteString(fmt.Sprintf("- **Role:** %s\n", resp.User.Role))
+	sb.WriteString(fmt.Sprintf("\n## API Key\n\n"))
+	sb.WriteString(fmt.Sprintf("```\n%s\n```\n\n", resp.APIKey))
+	sb.WriteString("**⚠️ Save this API key now - it will not be shown again!**\n")
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleDeleteUser(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	userID, _ := args["user_id"].(string)
+
+	err := s.client.DeleteUser(userID)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to delete user: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("# User Deleted\n\nUser `%s` has been deleted.", userID)), nil
 }
 
 // Resource handlers

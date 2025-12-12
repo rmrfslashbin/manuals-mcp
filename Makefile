@@ -1,6 +1,7 @@
 # Makefile for manuals-mcp
 
 BINARY_NAME=manuals-mcp
+BIN_DIR=bin
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 GIT_COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -13,21 +14,25 @@ all: check build
 ## Build targets
 
 build: ## Build the binary
-	go build $(LDFLAGS) -o $(BINARY_NAME) ./cmd/manuals-mcp
+	@mkdir -p $(BIN_DIR)
+	go build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/manuals-mcp
 
 build-linux: ## Build for Linux amd64
-	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BINARY_NAME)-linux-amd64 ./cmd/manuals-mcp
+	@mkdir -p $(BIN_DIR)
+	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/manuals-mcp
 
 build-darwin: ## Build for macOS amd64
-	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BINARY_NAME)-darwin-amd64 ./cmd/manuals-mcp
+	@mkdir -p $(BIN_DIR)
+	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/manuals-mcp
 
 build-darwin-arm64: ## Build for macOS arm64
-	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BINARY_NAME)-darwin-arm64 ./cmd/manuals-mcp
+	@mkdir -p $(BIN_DIR)
+	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/manuals-mcp
 
 build-all: build-linux build-darwin build-darwin-arm64 ## Build for all platforms
 
 clean: ## Remove build artifacts
-	rm -f $(BINARY_NAME) $(BINARY_NAME)-* coverage.out coverage.html
+	rm -rf $(BIN_DIR) coverage.out coverage.html
 
 ## Test targets
 

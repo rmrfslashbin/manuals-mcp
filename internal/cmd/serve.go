@@ -25,7 +25,7 @@ The server connects to the Manuals REST API to serve documentation.
 
 Environment Variables:
   MANUALS_API_URL    - URL of the Manuals REST API (required)
-  MANUALS_API_KEY    - API key for authentication (required)
+  MANUALS_API_KEY    - API key for authentication (optional, enables admin features)
   MANUALS_LOG_LEVEL  - Log level (debug, info, warn, error)
   MANUALS_LOG_FORMAT - Log format (json, text)
   MANUALS_LOG_OUTPUT - Log output (stderr, /path/to/file, /path/to/dir/)`,
@@ -38,14 +38,18 @@ Environment Variables:
 		if apiURL == "" {
 			return fmt.Errorf("MANUALS_API_URL is required")
 		}
-		if apiKey == "" {
-			return fmt.Errorf("MANUALS_API_KEY is required")
+
+		// API key is now optional - allows anonymous read-only access
+		anonymousMode := apiKey == ""
+		if anonymousMode {
+			logger.Info("running in anonymous mode (read-only access)")
 		}
 
 		logger.Info("starting MCP server",
 			"version", version,
 			"commit", gitCommit,
 			"api_url", apiURL,
+			"anonymous_mode", anonymousMode,
 		)
 
 		// Create API client
