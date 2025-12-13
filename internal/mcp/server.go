@@ -3,10 +3,13 @@ package mcp
 
 import (
 	"context"
-	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -53,70 +56,92 @@ func NewServer(apiClient *client.Client, version, gitCommit, buildTime string, l
 
 // registerTools registers all MCP tools.
 func (s *Server) registerTools() {
+	// ===========================================
+	// DISCOVERY & WORKFLOW TOOLS
+	// These tools help AI assistants understand capabilities and workflows
+	// ===========================================
+
+	// Tool: my_capabilities - Show available actions based on role
+	s.mcp.AddTool(mcp.NewTool("my_capabilities",
+		mcp.WithDescription("Show available tools and capabilities based on your authentication role. Use this first to understand what actions you can perform. Returns a categorized list of available tools with usage examples."),
+	), s.handleMyCapabilities)
+
+	// Tool: ingest_workflow - Get document ingestion workflow guidance
+	s.mcp.AddTool(mcp.NewTool("ingest_workflow",
+		mcp.WithDescription("Get step-by-step guidance for ingesting new documentation into the platform. Explains the complete workflow from processing a source document (PDF/datasheet) to publishing it. Use this when you need to add new hardware or software documentation."),
+		mcp.WithString("doc_type",
+			mcp.Description("Type of documentation to ingest: 'hardware' (MCU, sensor, SBC), 'software' (applications, tools), or 'protocol' (I2C, SPI, UART). Defaults to 'hardware'."),
+		),
+	), s.handleIngestWorkflow)
+
+	// ===========================================
+	// READ-ONLY TOOLS (Available to all users including anonymous)
+	// ===========================================
+
 	// Tool: search - Full-text search
 	s.mcp.AddTool(mcp.NewTool("search_manuals",
-		mcp.WithDescription("Search across hardware and software documentation using full-text search"),
+		mcp.WithDescription("Search across all hardware and software documentation using full-text search. Returns matching devices with relevance scores and text snippets. Use this to find devices by name, feature, interface (I2C, SPI, UART), or any keyword in the documentation."),
 		mcp.WithString("query",
-			mcp.Description("Search query"),
+			mcp.Description("Search query - can be device name, feature, interface type, or any keyword"),
 			mcp.Required(),
 		),
 		mcp.WithString("domain",
-			mcp.Description("Filter by domain: hardware, software, or protocol"),
+			mcp.Description("Filter by domain: 'hardware', 'software', or 'protocol'"),
 		),
 		mcp.WithString("type",
-			mcp.Description("Filter by device type (e.g., sensors, dev-boards)"),
+			mcp.Description("Filter by device type (e.g., 'sensors', 'mcu-boards', 'sbc', 'power', 'displays')"),
 		),
 		mcp.WithNumber("limit",
-			mcp.Description("Maximum results to return (default: 10)"),
+			mcp.Description("Maximum results to return (default: 10, max: 100)"),
 		),
 	), s.handleSearch)
 
 	// Tool: get_device - Get device details
 	s.mcp.AddTool(mcp.NewTool("get_device",
-		mcp.WithDescription("Get detailed information about a specific device including content and metadata"),
+		mcp.WithDescription("Get complete documentation for a specific device including full markdown content, metadata, and specifications. Use the device_id from search_manuals or list_devices results."),
 		mcp.WithString("device_id",
-			mcp.Description("Device ID"),
+			mcp.Description("Device ID (e.g., 'sbc-raspberry-pi-raspberry-pi-5'). Use search_manuals to find device IDs."),
 			mcp.Required(),
 		),
 	), s.handleGetDevice)
 
 	// Tool: list_devices - List all devices
 	s.mcp.AddTool(mcp.NewTool("list_devices",
-		mcp.WithDescription("List all devices with optional filtering"),
+		mcp.WithDescription("Browse all devices in the documentation library with optional filtering. Returns device names, IDs, domains, and types. Use this to explore available documentation or find devices by category."),
 		mcp.WithString("domain",
-			mcp.Description("Filter by domain: hardware, software, or protocol"),
+			mcp.Description("Filter by domain: 'hardware', 'software', or 'protocol'"),
 		),
 		mcp.WithString("type",
-			mcp.Description("Filter by device type"),
+			mcp.Description("Filter by device type: 'sensors', 'mcu-boards', 'sbc', 'power', 'displays', 'communication', etc."),
 		),
 		mcp.WithNumber("limit",
-			mcp.Description("Maximum results (default: 50)"),
+			mcp.Description("Maximum results (default: 50, max: 200)"),
 		),
 	), s.handleListDevices)
 
 	// Tool: get_pinout - Get GPIO pinout
 	s.mcp.AddTool(mcp.NewTool("get_pinout",
-		mcp.WithDescription("Get GPIO pinout information for a hardware device"),
+		mcp.WithDescription("Get GPIO pinout table for a hardware device. Returns physical pin numbers, GPIO numbers, pin names, and descriptions. Essential for wiring diagrams and hardware connections."),
 		mcp.WithString("device_id",
-			mcp.Description("Device ID"),
+			mcp.Description("Device ID (e.g., 'sbc-raspberry-pi-raspberry-pi-5')"),
 			mcp.Required(),
 		),
 	), s.handleGetPinout)
 
 	// Tool: get_specs - Get device specifications
 	s.mcp.AddTool(mcp.NewTool("get_specs",
-		mcp.WithDescription("Get technical specifications for a device"),
+		mcp.WithDescription("Get technical specifications for a device as key-value pairs. Useful for comparing devices or quick specification lookups without retrieving full documentation."),
 		mcp.WithString("device_id",
-			mcp.Description("Device ID"),
+			mcp.Description("Device ID (e.g., 'sensors-temperature-ds18b20')"),
 			mcp.Required(),
 		),
 	), s.handleGetSpecs)
 
 	// Tool: list_documents - List documents
 	s.mcp.AddTool(mcp.NewTool("list_documents",
-		mcp.WithDescription("List available documents (PDFs, datasheets)"),
+		mcp.WithDescription("List available PDF documents and datasheets. Returns document IDs, filenames, and sizes. Documents can be associated with specific devices or be standalone."),
 		mcp.WithString("device_id",
-			mcp.Description("Filter by device ID"),
+			mcp.Description("Filter to show only documents for a specific device"),
 		),
 		mcp.WithNumber("limit",
 			mcp.Description("Maximum results (default: 50)"),
@@ -125,71 +150,100 @@ func (s *Server) registerTools() {
 
 	// Tool: get_status - Get API status
 	s.mcp.AddTool(mcp.NewTool("get_status",
-		mcp.WithDescription("Get Manuals API status and statistics"),
+		mcp.WithDescription("Get Manuals API health status and database statistics. Shows total device count, document count, and last reindex time. Use to verify the API is operational."),
 	), s.handleGetStatus)
 
 	// Tool: info - Get MCP server information
 	s.mcp.AddTool(mcp.NewTool("info",
-		mcp.WithDescription("Get MCP server version, build info, and connection status"),
+		mcp.WithDescription("Get MCP server version, build info, API connection status, and current authentication details. Shows your user name, role, and what capabilities are available to you."),
 	), s.handleInfo)
 
-	// RW Tools (require RW or Admin role)
+	// ===========================================
+	// CONTENT MANAGEMENT TOOLS (Require RW or Admin role)
+	// ===========================================
 
 	// Tool: trigger_reindex - Trigger documentation reindex
 	s.mcp.AddTool(mcp.NewTool("trigger_reindex",
-		mcp.WithDescription("Trigger a reindex of the documentation. Requires RW or Admin role."),
+		mcp.WithDescription("Trigger a background reindex of all documentation. The index is updated from files in the docs storage. Use after uploading new files. Requires RW or Admin role."),
 	), s.handleTriggerReindex)
 
 	// Tool: get_reindex_status - Get reindex status
 	s.mcp.AddTool(mcp.NewTool("get_reindex_status",
-		mcp.WithDescription("Get the current reindex status. Requires RW or Admin role."),
+		mcp.WithDescription("Check the status of the documentation reindex operation. Shows if reindex is running, last completion time, and statistics from the last run. Requires RW or Admin role."),
 	), s.handleGetReindexStatus)
 
-	// Tool: upload_file - Upload a file to documentation storage
+	// Tool: upload_file - Upload a file from local filesystem
 	s.mcp.AddTool(mcp.NewTool("upload_file",
-		mcp.WithDescription("Upload a file to the documentation storage. Requires RW or Admin role."),
-		mcp.WithString("path",
-			mcp.Description("Destination path relative to docs root (e.g., 'sensors/environmental/bme680/BME680_Reference.md')"),
+		mcp.WithDescription("Upload a file to the documentation storage. Can read directly from a local file path (preferred) or accept content as a string. Requires RW or Admin role."),
+		mcp.WithString("dest_path",
+			mcp.Description("Destination path in docs storage (e.g., 'sensors/environmental/bme680/BME680_Reference.md' or 'guides/QUICKSTART.md')"),
 			mcp.Required(),
 		),
-		mcp.WithString("filename",
-			mcp.Description("The filename for the uploaded file"),
-			mcp.Required(),
+		mcp.WithString("local_path",
+			mcp.Description("Local filesystem path to read the file from (e.g., '/home/user/docs/README.md'). Preferred over content parameter."),
 		),
 		mcp.WithString("content",
-			mcp.Description("The file content (text files) or base64-encoded content (binary files)"),
-			mcp.Required(),
-		),
-		mcp.WithBoolean("base64",
-			mcp.Description("If true, content is base64-encoded (for binary files like PDFs)"),
+			mcp.Description("File content as text. Only use if local_path is not available. For binary files, use local_path instead."),
 		),
 	), s.handleUploadFile)
 
-	// Admin Tools (require Admin role)
+	// Tool: publish - Upload file and trigger reindex in one operation
+	s.mcp.AddTool(mcp.NewTool("publish",
+		mcp.WithDescription("Upload a file and automatically trigger reindex. Combines upload_file + trigger_reindex in one operation. This is the preferred method for publishing new documentation. Requires RW or Admin role."),
+		mcp.WithString("dest_path",
+			mcp.Description("Destination path in docs storage (e.g., 'sensors/temperature/ds18b20/DS18B20_Reference.md')"),
+			mcp.Required(),
+		),
+		mcp.WithString("local_path",
+			mcp.Description("Local filesystem path to read the file from. Preferred method."),
+		),
+		mcp.WithString("content",
+			mcp.Description("File content as text. Only use if local_path is not available."),
+		),
+		mcp.WithBoolean("wait_for_reindex",
+			mcp.Description("If true, wait for reindex to complete before returning (default: false)"),
+		),
+	), s.handlePublish)
+
+	// Tool: publish_batch - Upload multiple files and trigger single reindex
+	s.mcp.AddTool(mcp.NewTool("publish_batch",
+		mcp.WithDescription("Upload multiple files and trigger a single reindex after all uploads complete. More efficient than multiple publish calls. Requires RW or Admin role."),
+		mcp.WithString("files",
+			mcp.Description("JSON array of file objects: [{\"local_path\": \"/path/to/file\", \"dest_path\": \"sensors/temp/file.md\"}, ...]. Each object must have dest_path and either local_path or content."),
+			mcp.Required(),
+		),
+		mcp.WithBoolean("wait_for_reindex",
+			mcp.Description("If true, wait for reindex to complete before returning (default: false)"),
+		),
+	), s.handlePublishBatch)
+
+	// ===========================================
+	// ADMIN TOOLS (Require Admin role)
+	// ===========================================
 
 	// Tool: list_users - List all users
 	s.mcp.AddTool(mcp.NewTool("list_users",
-		mcp.WithDescription("List all users. Requires Admin role."),
+		mcp.WithDescription("List all users with their roles, status, and creation dates. Use to audit user access. Requires Admin role."),
 	), s.handleListUsers)
 
 	// Tool: create_user - Create a new user
 	s.mcp.AddTool(mcp.NewTool("create_user",
-		mcp.WithDescription("Create a new user. Requires Admin role. Returns the API key (save it, won't be shown again)."),
+		mcp.WithDescription("Create a new user account and generate an API key. IMPORTANT: The API key is only shown once - save it immediately. Requires Admin role."),
 		mcp.WithString("name",
-			mcp.Description("User name"),
+			mcp.Description("User name (e.g., 'alice', 'ci-bot', 'readonly-viewer')"),
 			mcp.Required(),
 		),
 		mcp.WithString("role",
-			mcp.Description("User role: 'admin', 'rw', or 'ro'"),
+			mcp.Description("User role: 'admin' (full access), 'rw' (read + publish docs), or 'ro' (read-only)"),
 			mcp.Required(),
 		),
 	), s.handleCreateUser)
 
 	// Tool: delete_user - Delete a user
 	s.mcp.AddTool(mcp.NewTool("delete_user",
-		mcp.WithDescription("Delete a user by ID. Requires Admin role."),
+		mcp.WithDescription("Delete a user account and invalidate their API key. This action cannot be undone. Requires Admin role."),
 		mcp.WithString("user_id",
-			mcp.Description("User ID to delete"),
+			mcp.Description("User ID to delete (get from list_users)"),
 			mcp.Required(),
 		),
 	), s.handleDeleteUser)
@@ -222,7 +276,211 @@ func (s *Server) Serve(ctx context.Context) error {
 	return server.ServeStdio(s.mcp)
 }
 
-// Tool handlers
+// ===========================================
+// DISCOVERY & WORKFLOW HANDLERS
+// ===========================================
+
+func (s *Server) handleMyCapabilities(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var sb strings.Builder
+
+	sb.WriteString("# Your Capabilities\n\n")
+
+	// Check authentication status
+	var role string
+	var userName string
+	if s.client.HasAPIKey() {
+		user, err := s.client.GetMe()
+		if err != nil {
+			sb.WriteString("**Status:** Error checking authentication\n\n")
+			role = "unknown"
+		} else if user != nil {
+			userName = user.Name
+			role = user.Role
+			sb.WriteString(fmt.Sprintf("**User:** %s\n", userName))
+			sb.WriteString(fmt.Sprintf("**Role:** %s\n", role))
+			sb.WriteString("**Status:** Authenticated\n\n")
+		}
+	} else {
+		role = "anonymous"
+		sb.WriteString("**Status:** Anonymous (read-only)\n\n")
+	}
+
+	// Read-only tools (available to everyone)
+	sb.WriteString("## Read-Only Tools (Available)\n\n")
+	sb.WriteString("| Tool | Description |\n")
+	sb.WriteString("|------|-------------|\n")
+	sb.WriteString("| `search_manuals` | Search documentation by keyword |\n")
+	sb.WriteString("| `list_devices` | Browse all devices |\n")
+	sb.WriteString("| `get_device` | Get full device documentation |\n")
+	sb.WriteString("| `get_pinout` | Get GPIO pinout table |\n")
+	sb.WriteString("| `get_specs` | Get device specifications |\n")
+	sb.WriteString("| `list_documents` | List PDFs and datasheets |\n")
+	sb.WriteString("| `get_status` | Check API health |\n")
+	sb.WriteString("| `info` | Get server and auth info |\n")
+	sb.WriteString("| `ingest_workflow` | Get document ingestion guidance |\n\n")
+
+	// Content management tools (RW or Admin)
+	if role == "rw" || role == "admin" {
+		sb.WriteString("## Content Management Tools (Available)\n\n")
+		sb.WriteString("| Tool | Description |\n")
+		sb.WriteString("|------|-------------|\n")
+		sb.WriteString("| `upload_file` | Upload a file to docs storage |\n")
+		sb.WriteString("| `publish` | Upload + auto-reindex (recommended) |\n")
+		sb.WriteString("| `publish_batch` | Upload multiple files + reindex |\n")
+		sb.WriteString("| `trigger_reindex` | Manually trigger reindex |\n")
+		sb.WriteString("| `get_reindex_status` | Check reindex progress |\n\n")
+	} else {
+		sb.WriteString("## Content Management Tools (Requires RW Role)\n\n")
+		sb.WriteString("*Not available with your current role. Contact admin for RW access.*\n\n")
+	}
+
+	// Admin tools
+	if role == "admin" {
+		sb.WriteString("## Admin Tools (Available)\n\n")
+		sb.WriteString("| Tool | Description |\n")
+		sb.WriteString("|------|-------------|\n")
+		sb.WriteString("| `list_users` | List all user accounts |\n")
+		sb.WriteString("| `create_user` | Create new user + API key |\n")
+		sb.WriteString("| `delete_user` | Delete user account |\n\n")
+	} else if role == "rw" {
+		sb.WriteString("## Admin Tools (Requires Admin Role)\n\n")
+		sb.WriteString("*Not available with your current role.*\n\n")
+	}
+
+	// Quick start guide
+	sb.WriteString("## Quick Start\n\n")
+	sb.WriteString("1. **Find devices:** `search_manuals(query: \"raspberry pi\")` or `list_devices()`\n")
+	sb.WriteString("2. **Get details:** `get_device(device_id: \"...\")` using ID from search\n")
+	sb.WriteString("3. **Get pinout:** `get_pinout(device_id: \"...\")` for wiring info\n")
+	if role == "rw" || role == "admin" {
+		sb.WriteString("4. **Add docs:** Use `ingest_workflow()` for guidance, then `publish()`\n")
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleIngestWorkflow(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	docType, _ := args["doc_type"].(string)
+	if docType == "" {
+		docType = "hardware"
+	}
+
+	var sb strings.Builder
+
+	sb.WriteString("# Document Ingestion Workflow\n\n")
+
+	// Check if user has RW permissions
+	if s.client.HasAPIKey() {
+		user, err := s.client.GetMe()
+		if err == nil && user != nil && (user.Role == "rw" || user.Role == "admin") {
+			sb.WriteString("**Your Role:** " + user.Role + " ✓ (can publish)\n\n")
+		} else {
+			sb.WriteString("**⚠️ Note:** You need RW or Admin role to publish. Current workflow is read-only.\n\n")
+		}
+	} else {
+		sb.WriteString("**⚠️ Note:** You're in anonymous mode. Publishing requires authentication.\n\n")
+	}
+
+	sb.WriteString("## Overview\n\n")
+	sb.WriteString("This workflow guides you through adding new documentation to the Manuals platform.\n")
+	sb.WriteString("The AI assistant (you) processes source documents and creates structured markdown.\n\n")
+
+	sb.WriteString("## Step 1: Analyze Source Document\n\n")
+	sb.WriteString("Read the source document (PDF, datasheet, manual) and extract:\n\n")
+
+	switch docType {
+	case "software":
+		sb.WriteString("- Application name and version\n")
+		sb.WriteString("- Supported platforms\n")
+		sb.WriteString("- Key features and capabilities\n")
+		sb.WriteString("- Installation instructions\n")
+		sb.WriteString("- Configuration options\n")
+		sb.WriteString("- Usage examples\n\n")
+	case "protocol":
+		sb.WriteString("- Protocol name and version\n")
+		sb.WriteString("- Physical layer specifications\n")
+		sb.WriteString("- Frame format and timing\n")
+		sb.WriteString("- Command/register reference\n")
+		sb.WriteString("- Example transactions\n\n")
+	default: // hardware
+		sb.WriteString("- Device name and model number\n")
+		sb.WriteString("- Manufacturer\n")
+		sb.WriteString("- Key specifications (voltage, current, temperature range)\n")
+		sb.WriteString("- Complete pinout with GPIO mappings\n")
+		sb.WriteString("- Communication interfaces (I2C, SPI, UART)\n")
+		sb.WriteString("- Wiring diagrams (ASCII art)\n\n")
+	}
+
+	sb.WriteString("## Step 2: Create Markdown Documentation\n\n")
+	sb.WriteString("Create a structured markdown file with:\n\n")
+	sb.WriteString("```yaml\n")
+	sb.WriteString("---\n")
+	sb.WriteString("manufacturer: [Manufacturer Name]\n")
+	sb.WriteString("model: [Model Number]\n")
+	sb.WriteString("category: [category]/[subcategory]\n")
+	sb.WriteString("version: v1.0\n")
+	sb.WriteString("date: YYYY-MM-DD\n")
+	sb.WriteString("tags: [tag1, tag2, tag3]\n")
+	sb.WriteString("specs:\n")
+	sb.WriteString("  key1: \"value1\"\n")
+	sb.WriteString("  key2: \"value2\"\n")
+	sb.WriteString("---\n")
+	sb.WriteString("```\n\n")
+	sb.WriteString("Follow with: Overview, Specifications, Pinout (table), Wiring, Examples.\n\n")
+
+	sb.WriteString("## Step 3: Determine Destination Path\n\n")
+	sb.WriteString("Path format: `{category}/{subcategory}/{device-name}/{filename}.md`\n\n")
+	sb.WriteString("**Categories:**\n")
+	sb.WriteString("- `mcu-boards/` - ESP32, STM32, Arduino boards\n")
+	sb.WriteString("- `sensors/` - Temperature, radar, environmental\n")
+	sb.WriteString("- `sbc/` - Raspberry Pi, Orange Pi\n")
+	sb.WriteString("- `power/` - Regulators, battery management\n")
+	sb.WriteString("- `displays/` - LCD, OLED, e-ink\n")
+	sb.WriteString("- `communication/` - WiFi, LoRa, cellular\n")
+	sb.WriteString("- `software/` - Applications, tools\n")
+	sb.WriteString("- `protocols/` - I2C, SPI, UART specs\n")
+	sb.WriteString("- `guides/` - Platform guides and tutorials\n\n")
+
+	sb.WriteString("**Example paths:**\n")
+	sb.WriteString("- `sensors/temperature/ds18b20/DS18B20_Reference.md`\n")
+	sb.WriteString("- `mcu-boards/esp32/esp32-s3-devkitc-1/ESP32-S3-DevKitC-1_Reference.md`\n")
+	sb.WriteString("- `guides/QUICKSTART.md`\n\n")
+
+	sb.WriteString("## Step 4: Save & Publish\n\n")
+	sb.WriteString("1. **Save the markdown file locally** (e.g., `/tmp/device_docs/DS18B20_Reference.md`)\n\n")
+	sb.WriteString("2. **Publish using local path (recommended):**\n")
+	sb.WriteString("   ```\n")
+	sb.WriteString("   publish(\n")
+	sb.WriteString("     local_path: \"/tmp/device_docs/DS18B20_Reference.md\",\n")
+	sb.WriteString("     dest_path: \"sensors/temperature/ds18b20/DS18B20_Reference.md\"\n")
+	sb.WriteString("   )\n")
+	sb.WriteString("   ```\n\n")
+	sb.WriteString("3. **For multiple files, use publish_batch:**\n")
+	sb.WriteString("   ```\n")
+	sb.WriteString("   publish_batch(\n")
+	sb.WriteString("     files: '[{\"local_path\": \"/tmp/file1.md\", \"dest_path\": \"path/file1.md\"}, ...]'\n")
+	sb.WriteString("   )\n")
+	sb.WriteString("   ```\n\n")
+
+	sb.WriteString("## Step 5: Verify\n\n")
+	sb.WriteString("After publishing:\n")
+	sb.WriteString("1. `get_reindex_status()` - Confirm reindex completed\n")
+	sb.WriteString("2. `search_manuals(query: \"device name\")` - Verify document is searchable\n")
+	sb.WriteString("3. `get_device(device_id: \"...\")` - Check content renders correctly\n\n")
+
+	sb.WriteString("## Tips\n\n")
+	sb.WriteString("- Use ASCII art for diagrams (not images)\n")
+	sb.WriteString("- Use markdown tables for pinouts and specs\n")
+	sb.WriteString("- Include code examples in fenced blocks with language\n")
+	sb.WriteString("- Reference PDF pages for complex diagrams\n")
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// ===========================================
+// READ-ONLY TOOL HANDLERS
+// ===========================================
 
 func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
@@ -484,28 +742,245 @@ func (s *Server) handleGetReindexStatus(ctx context.Context, request mcp.CallToo
 
 func (s *Server) handleUploadFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
-	path, _ := args["path"].(string)
-	filename, _ := args["filename"].(string)
+	destPath, _ := args["dest_path"].(string)
+	localPath, _ := args["local_path"].(string)
 	content, _ := args["content"].(string)
-	isBase64, _ := args["base64"].(bool)
 
-	var fileContent []byte
-	if isBase64 {
-		decoded, err := base64.StdEncoding.DecodeString(content)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to decode base64 content: %v", err)), nil
-		}
-		fileContent = decoded
-	} else {
-		fileContent = []byte(content)
+	if destPath == "" {
+		return mcp.NewToolResultError("dest_path is required"), nil
 	}
 
-	resp, err := s.client.UploadFile(path, filename, fileContent)
+	var fileContent []byte
+	var filename string
+
+	// Prefer local_path over content
+	if localPath != "" {
+		// Read file from local filesystem
+		data, err := os.ReadFile(localPath)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to read local file '%s': %v", localPath, err)), nil
+		}
+		fileContent = data
+		filename = filepath.Base(localPath)
+	} else if content != "" {
+		// Use provided content
+		fileContent = []byte(content)
+		filename = filepath.Base(destPath)
+	} else {
+		return mcp.NewToolResultError("either local_path or content must be provided"), nil
+	}
+
+	resp, err := s.client.UploadFile(destPath, filename, fileContent)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to upload file: %v", err)), nil
 	}
 
-	return mcp.NewToolResultText(fmt.Sprintf("# File Uploaded\n\n- **Path:** %s\n- **Filename:** %s\n- **Size:** %d bytes\n", resp.Path, resp.Filename, resp.Size)), nil
+	var sb strings.Builder
+	sb.WriteString("# File Uploaded\n\n")
+	sb.WriteString(fmt.Sprintf("- **Destination:** %s\n", resp.Path))
+	sb.WriteString(fmt.Sprintf("- **Filename:** %s\n", resp.Filename))
+	sb.WriteString(fmt.Sprintf("- **Size:** %d bytes\n", resp.Size))
+	if localPath != "" {
+		sb.WriteString(fmt.Sprintf("- **Source:** %s\n", localPath))
+	}
+	sb.WriteString("\n**Note:** Run `trigger_reindex()` or use `publish()` to make the file searchable.\n")
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handlePublish(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	destPath, _ := args["dest_path"].(string)
+	localPath, _ := args["local_path"].(string)
+	content, _ := args["content"].(string)
+	waitForReindex, _ := args["wait_for_reindex"].(bool)
+
+	if destPath == "" {
+		return mcp.NewToolResultError("dest_path is required"), nil
+	}
+
+	var fileContent []byte
+	var filename string
+
+	// Prefer local_path over content
+	if localPath != "" {
+		data, err := os.ReadFile(localPath)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to read local file '%s': %v", localPath, err)), nil
+		}
+		fileContent = data
+		filename = filepath.Base(localPath)
+	} else if content != "" {
+		fileContent = []byte(content)
+		filename = filepath.Base(destPath)
+	} else {
+		return mcp.NewToolResultError("either local_path or content must be provided"), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString("# Publish Results\n\n")
+
+	// Upload file
+	uploadResp, err := s.client.UploadFile(destPath, filename, fileContent)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to upload file: %v", err)), nil
+	}
+
+	sb.WriteString("## Upload\n\n")
+	sb.WriteString(fmt.Sprintf("- **Destination:** %s\n", uploadResp.Path))
+	sb.WriteString(fmt.Sprintf("- **Filename:** %s\n", uploadResp.Filename))
+	sb.WriteString(fmt.Sprintf("- **Size:** %d bytes\n", uploadResp.Size))
+	if localPath != "" {
+		sb.WriteString(fmt.Sprintf("- **Source:** %s\n", localPath))
+	}
+
+	// Trigger reindex
+	reindexResp, err := s.client.TriggerReindex()
+	if err != nil {
+		sb.WriteString("\n## Reindex\n\n")
+		sb.WriteString(fmt.Sprintf("**⚠️ Warning:** Reindex failed: %v\n", err))
+		sb.WriteString("File was uploaded but may not be searchable. Try `trigger_reindex()` manually.\n")
+		return mcp.NewToolResultText(sb.String()), nil
+	}
+
+	sb.WriteString("\n## Reindex\n\n")
+	sb.WriteString(fmt.Sprintf("- **Status:** %s\n", reindexResp.Status))
+
+	// Wait for reindex if requested
+	if waitForReindex {
+		sb.WriteString("- **Waiting:** Polling for completion...\n")
+
+		// Poll for up to 60 seconds
+		for i := 0; i < 30; i++ {
+			time.Sleep(2 * time.Second)
+			status, err := s.client.GetReindexStatus()
+			if err != nil {
+				sb.WriteString(fmt.Sprintf("- **Warning:** Error checking status: %v\n", err))
+				break
+			}
+			if status.Status == "idle" {
+				sb.WriteString(fmt.Sprintf("- **Completed:** Reindex finished in %s\n", status.LastRun.Duration))
+				sb.WriteString(fmt.Sprintf("- **Devices:** %d indexed\n", status.LastRun.DevicesIndexed))
+				sb.WriteString(fmt.Sprintf("- **Documents:** %d indexed\n", status.LastRun.DocumentsIndexed))
+				break
+			}
+		}
+	} else {
+		sb.WriteString("- **Note:** Reindex running in background. Use `get_reindex_status()` to check progress.\n")
+	}
+
+	sb.WriteString("\n## Next Steps\n\n")
+	sb.WriteString(fmt.Sprintf("1. Verify: `search_manuals(query: \"%s\")`\n", filename))
+	sb.WriteString("2. Check content: `get_device(device_id: \"...\")` using ID from search\n")
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// BatchFile represents a file in a batch upload
+type BatchFile struct {
+	LocalPath string `json:"local_path"`
+	DestPath  string `json:"dest_path"`
+	Content   string `json:"content,omitempty"`
+}
+
+func (s *Server) handlePublishBatch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	filesJSON, _ := args["files"].(string)
+	waitForReindex, _ := args["wait_for_reindex"].(bool)
+
+	if filesJSON == "" {
+		return mcp.NewToolResultError("files parameter is required (JSON array)"), nil
+	}
+
+	// Parse files JSON
+	var files []BatchFile
+	if err := json.Unmarshal([]byte(filesJSON), &files); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to parse files JSON: %v", err)), nil
+	}
+
+	if len(files) == 0 {
+		return mcp.NewToolResultError("files array is empty"), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString("# Batch Publish Results\n\n")
+	sb.WriteString(fmt.Sprintf("**Files to upload:** %d\n\n", len(files)))
+
+	// Upload each file
+	sb.WriteString("## Uploads\n\n")
+	successCount := 0
+	for i, f := range files {
+		if f.DestPath == "" {
+			sb.WriteString(fmt.Sprintf("%d. **Error:** Missing dest_path\n", i+1))
+			continue
+		}
+
+		var fileContent []byte
+		var filename string
+
+		if f.LocalPath != "" {
+			data, err := os.ReadFile(f.LocalPath)
+			if err != nil {
+				sb.WriteString(fmt.Sprintf("%d. **Error:** %s - failed to read: %v\n", i+1, f.LocalPath, err))
+				continue
+			}
+			fileContent = data
+			filename = filepath.Base(f.LocalPath)
+		} else if f.Content != "" {
+			fileContent = []byte(f.Content)
+			filename = filepath.Base(f.DestPath)
+		} else {
+			sb.WriteString(fmt.Sprintf("%d. **Error:** %s - no local_path or content\n", i+1, f.DestPath))
+			continue
+		}
+
+		resp, err := s.client.UploadFile(f.DestPath, filename, fileContent)
+		if err != nil {
+			sb.WriteString(fmt.Sprintf("%d. **Error:** %s - %v\n", i+1, f.DestPath, err))
+			continue
+		}
+
+		sb.WriteString(fmt.Sprintf("%d. **✓** %s (%d bytes)\n", i+1, resp.Path, resp.Size))
+		successCount++
+	}
+
+	sb.WriteString(fmt.Sprintf("\n**Uploaded:** %d/%d files\n", successCount, len(files)))
+
+	if successCount == 0 {
+		sb.WriteString("\n**⚠️ No files uploaded. Skipping reindex.**\n")
+		return mcp.NewToolResultText(sb.String()), nil
+	}
+
+	// Trigger single reindex for all uploads
+	sb.WriteString("\n## Reindex\n\n")
+	reindexResp, err := s.client.TriggerReindex()
+	if err != nil {
+		sb.WriteString(fmt.Sprintf("**⚠️ Warning:** Reindex failed: %v\n", err))
+		return mcp.NewToolResultText(sb.String()), nil
+	}
+
+	sb.WriteString(fmt.Sprintf("- **Status:** %s\n", reindexResp.Status))
+
+	// Wait for reindex if requested
+	if waitForReindex {
+		sb.WriteString("- **Waiting:** Polling for completion...\n")
+
+		for i := 0; i < 30; i++ {
+			time.Sleep(2 * time.Second)
+			status, err := s.client.GetReindexStatus()
+			if err != nil {
+				sb.WriteString(fmt.Sprintf("- **Warning:** Error checking status: %v\n", err))
+				break
+			}
+			if status.Status == "idle" {
+				sb.WriteString(fmt.Sprintf("- **Completed:** Reindex finished in %s\n", status.LastRun.Duration))
+				sb.WriteString(fmt.Sprintf("- **Devices:** %d indexed\n", status.LastRun.DevicesIndexed))
+				break
+			}
+		}
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
 }
 
 // Admin tool handlers
@@ -544,7 +1019,7 @@ func (s *Server) handleCreateUser(ctx context.Context, request mcp.CallToolReque
 	sb.WriteString(fmt.Sprintf("- **ID:** %s\n", resp.User.ID))
 	sb.WriteString(fmt.Sprintf("- **Name:** %s\n", resp.User.Name))
 	sb.WriteString(fmt.Sprintf("- **Role:** %s\n", resp.User.Role))
-	sb.WriteString(fmt.Sprintf("\n## API Key\n\n"))
+	sb.WriteString("\n## API Key\n\n")
 	sb.WriteString(fmt.Sprintf("```\n%s\n```\n\n", resp.APIKey))
 	sb.WriteString("**⚠️ Save this API key now - it will not be shown again!**\n")
 
