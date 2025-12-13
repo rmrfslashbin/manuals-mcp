@@ -465,29 +465,6 @@ func (c *Client) DeleteUser(id string) error {
 	return nil
 }
 
-// UpdateUserRole updates a user's role.
-// Requires Admin role.
-func (c *Client) UpdateUserRole(id, role string) error {
-	req := map[string]string{"role": role}
-	var resp map[string]string
-	if err := c.put("/admin/users/"+id+"/role", req, &resp); err != nil {
-		return err
-	}
-	return nil
-}
-
-// RotateAPIKey rotates a user's API key.
-// Requires Admin role.
-func (c *Client) RotateAPIKey(id string) (string, error) {
-	var resp struct {
-		APIKey  string `json:"api_key"`
-		Message string `json:"message"`
-	}
-	if err := c.post("/admin/users/"+id+"/rotate-key", nil, &resp); err != nil {
-		return "", err
-	}
-	return resp.APIKey, nil
-}
 
 // get performs a GET request and decodes the JSON response.
 func (c *Client) get(path string, result interface{}) error {
@@ -525,11 +502,6 @@ func (c *Client) get(path string, result interface{}) error {
 // post performs a POST request and decodes the JSON response.
 func (c *Client) post(path string, body interface{}, result interface{}) error {
 	return c.doJSON("POST", path, body, result)
-}
-
-// put performs a PUT request and decodes the JSON response.
-func (c *Client) put(path string, body interface{}, result interface{}) error {
-	return c.doJSON("PUT", path, body, result)
 }
 
 // delete performs a DELETE request and decodes the JSON response.
