@@ -198,6 +198,16 @@ type UploadResponse struct {
 	Filename string `json:"filename"`
 }
 
+// SyncResponse is the response from triggering a git sync.
+type SyncResponse struct {
+	Status       string `json:"status"`
+	Message      string `json:"message,omitempty"`
+	Commit       string `json:"commit,omitempty"`
+	FilesChanged int    `json:"files_changed,omitempty"`
+	Branch       string `json:"branch,omitempty"`
+	Error        string `json:"error,omitempty"`
+}
+
 // Search searches for devices.
 func (c *Client) Search(query string, limit int, domain, deviceType string) (*SearchResponse, error) {
 	params := url.Values{}
@@ -350,6 +360,16 @@ func (c *Client) TriggerReindex() (*ReindexResponse, error) {
 func (c *Client) GetReindexStatus() (*ReindexStatusResponse, error) {
 	var resp ReindexStatusResponse
 	if err := c.get("/rw/reindex/status", &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// TriggerSync triggers a git sync to push documentation changes.
+// Requires RW or Admin role.
+func (c *Client) TriggerSync() (*SyncResponse, error) {
+	var resp SyncResponse
+	if err := c.post("/rw/sync", nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil

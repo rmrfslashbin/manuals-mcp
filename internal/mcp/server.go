@@ -217,6 +217,11 @@ func (s *Server) registerTools() {
 		),
 	), s.handlePublishBatch)
 
+	// Tool: sync_to_git - Sync documentation to git repository
+	s.mcp.AddTool(mcp.NewTool("sync_to_git",
+		mcp.WithDescription("Sync all documentation changes to the git repository. Commits and pushes any new or modified files to the remote repository. Use this after publishing new documentation to persist changes. Requires RW or Admin role."),
+	), s.handleSyncToGit)
+
 	// ===========================================
 	// ADMIN TOOLS (Require Admin role)
 	// ===========================================
@@ -328,7 +333,8 @@ func (s *Server) handleMyCapabilities(ctx context.Context, request mcp.CallToolR
 		sb.WriteString("| `publish` | Upload + auto-reindex (recommended) |\n")
 		sb.WriteString("| `publish_batch` | Upload multiple files + reindex |\n")
 		sb.WriteString("| `trigger_reindex` | Manually trigger reindex |\n")
-		sb.WriteString("| `get_reindex_status` | Check reindex progress |\n\n")
+		sb.WriteString("| `get_reindex_status` | Check reindex progress |\n")
+		sb.WriteString("| `sync_to_git` | Commit and push docs to git repo |\n\n")
 	} else {
 		sb.WriteString("## Content Management Tools (Requires RW Role)\n\n")
 		sb.WriteString("*Not available with your current role. Contact admin for RW access.*\n\n")
@@ -977,6 +983,46 @@ func (s *Server) handlePublishBatch(ctx context.Context, request mcp.CallToolReq
 				sb.WriteString(fmt.Sprintf("- **Devices:** %d indexed\n", status.LastRun.DevicesIndexed))
 				break
 			}
+		}
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleSyncToGit(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	resp, err := s.client.TriggerSync()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to trigger sync: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString("# Git Sync Results\n\n")
+
+	switch resp.Status {
+	case "success":
+		sb.WriteString("**Status:** ✓ Success\n\n")
+		sb.WriteString(fmt.Sprintf("- **Commit:** %s\n", resp.Commit))
+		sb.WriteString(fmt.Sprintf("- **Files Changed:** %d\n", resp.FilesChanged))
+		sb.WriteString(fmt.Sprintf("- **Branch:** %s\n", resp.Branch))
+		sb.WriteString("\nDocumentation changes have been committed and pushed to the remote repository.\n")
+
+	case "no_changes":
+		sb.WriteString("**Status:** No Changes\n\n")
+		sb.WriteString("No new or modified files to commit. The repository is already up to date.\n")
+
+	case "error":
+		sb.WriteString("**Status:** ⚠️ Error\n\n")
+		if resp.Error != "" {
+			sb.WriteString(fmt.Sprintf("**Error:** %s\n", resp.Error))
+		}
+		if resp.Message != "" {
+			sb.WriteString(fmt.Sprintf("**Message:** %s\n", resp.Message))
+		}
+
+	default:
+		sb.WriteString(fmt.Sprintf("**Status:** %s\n", resp.Status))
+		if resp.Message != "" {
+			sb.WriteString(fmt.Sprintf("**Message:** %s\n", resp.Message))
 		}
 	}
 
