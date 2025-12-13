@@ -1,0 +1,149 @@
+{
+  "manifest_version": "0.2",
+  "name": "manuals-mcp",
+  "display_name": "Manuals Documentation Server",
+  "version": "1.0.0",
+  "description": "MCP server for accessing hardware and software documentation",
+  "long_description": "Access comprehensive hardware documentation including pinouts, specifications, and datasheets. Search across devices, get GPIO mappings, and manage documentation with AI-friendly tools.",
+
+  "author": {
+    "name": "rmrfslashbin",
+    "email": "rmrfslashbin@users.noreply.github.com"
+  },
+
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rmrfslashbin/manuals-mcp"
+  },
+
+  "homepage": "https://github.com/rmrfslashbin/manuals-mcp",
+  "documentation": "https://github.com/rmrfslashbin/manuals-mcp#readme",
+  "support": "https://github.com/rmrfslashbin/manuals-mcp/issues",
+  "license": "MIT",
+
+  "keywords": [
+    "hardware",
+    "documentation",
+    "pinout",
+    "datasheet",
+    "electronics",
+    "raspberry-pi",
+    "arduino",
+    "esp32"
+  ],
+
+  "server": {
+    "type": "binary",
+    "entry_point": "server/manuals-mcp",
+    "mcp_config": {
+      "command": "${__dirname}/server/manuals-mcp",
+      "args": ["serve"],
+      "env": {
+        "MANUALS_API_URL": "${user_config.api_url}",
+        "MANUALS_API_KEY": "${user_config.api_key}"
+      }
+    }
+  },
+
+  "user_config": {
+    "api_url": {
+      "type": "string",
+      "title": "API URL",
+      "description": "Manuals API server URL (e.g., http://localhost:8080 or http://manuals.local:8080)",
+      "required": true,
+      "default": "http://localhost:8080"
+    },
+    "api_key": {
+      "type": "string",
+      "title": "API Key",
+      "description": "Your Manuals API key for authentication. Leave empty for anonymous read-only access.",
+      "required": false
+    }
+  },
+
+  "tools": [
+    {
+      "name": "search_manuals",
+      "description": "Search across all hardware and software documentation"
+    },
+    {
+      "name": "list_devices",
+      "description": "Browse all devices in the documentation library"
+    },
+    {
+      "name": "get_device",
+      "description": "Get complete documentation for a specific device"
+    },
+    {
+      "name": "get_pinout",
+      "description": "Get GPIO pinout table for a hardware device"
+    },
+    {
+      "name": "get_specs",
+      "description": "Get technical specifications for a device"
+    },
+    {
+      "name": "list_documents",
+      "description": "List available PDF documents and datasheets"
+    },
+    {
+      "name": "get_status",
+      "description": "Get API health status and database statistics"
+    },
+    {
+      "name": "info",
+      "description": "Get MCP server version and connection info"
+    },
+    {
+      "name": "my_capabilities",
+      "description": "Show available tools based on your role"
+    },
+    {
+      "name": "ingest_workflow",
+      "description": "Get step-by-step guidance for adding new documentation"
+    },
+    {
+      "name": "trigger_reindex",
+      "description": "Trigger a background reindex of documentation (requires RW role)"
+    },
+    {
+      "name": "get_reindex_status",
+      "description": "Check the status of the reindex operation (requires RW role)"
+    },
+    {
+      "name": "upload_file",
+      "description": "Upload a file to documentation storage (requires RW role)"
+    },
+    {
+      "name": "publish",
+      "description": "Upload and auto-reindex documentation (requires RW role)"
+    },
+    {
+      "name": "publish_batch",
+      "description": "Upload multiple files and reindex (requires RW role)"
+    },
+    {
+      "name": "sync_to_git",
+      "description": "Commit and push documentation changes to git (requires RW role)"
+    },
+    {
+      "name": "list_users",
+      "description": "List all user accounts (requires Admin role)"
+    },
+    {
+      "name": "create_user",
+      "description": "Create a new user account (requires Admin role)"
+    },
+    {
+      "name": "delete_user",
+      "description": "Delete a user account (requires Admin role)"
+    }
+  ],
+
+  "tools_generated": false,
+  "prompts_generated": false,
+
+  "compatibility": {
+    "platforms": ["darwin", "linux", "win32"]
+  }
+}

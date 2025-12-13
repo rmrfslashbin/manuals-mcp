@@ -49,7 +49,40 @@ jobs:
           # Windows amd64
           GOOS=windows GOARCH=amd64 go build -ldflags "${LDFLAGS}" -o bin/manuals-mcp-windows-amd64.exe ./cmd/manuals-mcp
 
-      - name: List binaries
+      - name: Create MCPB packages
+        run: |
+          # Update manifest version from git tag
+          VERSION=${GITHUB_REF#refs/tags/v}
+          sed -i "s/\"version\": \".*\"/\"version\": \"${VERSION}\"/" mcpb/manifest.json
+
+          mkdir -p mcpb/server
+
+          # macOS arm64
+          cp bin/manuals-mcp-darwin-arm64 mcpb/server/manuals-mcp
+          chmod +x mcpb/server/manuals-mcp
+          cd mcpb && zip -r ../bin/manuals-mcp-darwin-arm64.mcpb manifest.json server/ && cd ..
+
+          # macOS amd64
+          cp bin/manuals-mcp-darwin-amd64 mcpb/server/manuals-mcp
+          chmod +x mcpb/server/manuals-mcp
+          cd mcpb && zip -r ../bin/manuals-mcp-darwin-amd64.mcpb manifest.json server/ && cd ..
+
+          # Linux amd64
+          cp bin/manuals-mcp-linux-amd64 mcpb/server/manuals-mcp
+          chmod +x mcpb/server/manuals-mcp
+          cd mcpb && zip -r ../bin/manuals-mcp-linux-amd64.mcpb manifest.json server/ && cd ..
+
+          # Linux arm64
+          cp bin/manuals-mcp-linux-arm64 mcpb/server/manuals-mcp
+          chmod +x mcpb/server/manuals-mcp
+          cd mcpb && zip -r ../bin/manuals-mcp-linux-arm64.mcpb manifest.json server/ && cd ..
+
+          # Windows amd64
+          rm -f mcpb/server/manuals-mcp
+          cp bin/manuals-mcp-windows-amd64.exe mcpb/server/manuals-mcp.exe
+          cd mcpb && zip -r ../bin/manuals-mcp-windows-amd64.mcpb manifest.json server/ && cd ..
+
+      - name: List artifacts
         run: ls -la bin/
 
       - name: Create Release
@@ -61,6 +94,11 @@ jobs:
             bin/manuals-mcp-darwin-amd64
             bin/manuals-mcp-darwin-arm64
             bin/manuals-mcp-windows-amd64.exe
+            bin/manuals-mcp-linux-amd64.mcpb
+            bin/manuals-mcp-linux-arm64.mcpb
+            bin/manuals-mcp-darwin-amd64.mcpb
+            bin/manuals-mcp-darwin-arm64.mcpb
+            bin/manuals-mcp-windows-amd64.mcpb
           draft: false
           prerelease: false
           generate_release_notes: true

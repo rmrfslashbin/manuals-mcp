@@ -58,6 +58,10 @@ data/
 dist/
 build/
 
+# MCPB packaging
+mcpb/server/
+*.mcpb
+
 # Logs
 *.log
 logs/
