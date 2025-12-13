@@ -137,6 +137,15 @@ func (s *Server) registerTools() {
 		),
 	), s.handleGetSpecs)
 
+	// Tool: get_device_refs - Get device references
+	s.mcp.AddTool(mcp.NewTool("get_device_refs",
+		mcp.WithDescription("Get references for a device including related devices, external links, and documentation references. Useful for finding related hardware or additional resources."),
+		mcp.WithString("device_id",
+			mcp.Description("Device ID (e.g., 'sbc-raspberry-pi-raspberry-pi-5')"),
+			mcp.Required(),
+		),
+	), s.handleGetDeviceRefs)
+
 	// Tool: list_documents - List documents
 	s.mcp.AddTool(mcp.NewTool("list_documents",
 		mcp.WithDescription("List available PDF documents and datasheets. Returns document IDs, filenames, and sizes. Documents can be associated with specific devices or be standalone."),
@@ -147,6 +156,32 @@ func (s *Server) registerTools() {
 			mcp.Description("Maximum results (default: 50)"),
 		),
 	), s.handleListDocuments)
+
+	// Tool: get_document - Get document details
+	s.mcp.AddTool(mcp.NewTool("get_document",
+		mcp.WithDescription("Get details for a specific document including filename, size, mime type, and checksum. Use the document_id from list_documents results."),
+		mcp.WithString("document_id",
+			mcp.Description("Document ID to retrieve"),
+			mcp.Required(),
+		),
+	), s.handleGetDocument)
+
+	// Tool: list_guides - List documentation guides
+	s.mcp.AddTool(mcp.NewTool("list_guides",
+		mcp.WithDescription("List available documentation guides. Guides provide tutorials, how-tos, and reference documentation that isn't device-specific."),
+		mcp.WithNumber("limit",
+			mcp.Description("Maximum results (default: 50)"),
+		),
+	), s.handleListGuides)
+
+	// Tool: get_guide - Get guide content
+	s.mcp.AddTool(mcp.NewTool("get_guide",
+		mcp.WithDescription("Get full content of a documentation guide. Use the guide_id from list_guides results."),
+		mcp.WithString("guide_id",
+			mcp.Description("Guide ID to retrieve"),
+			mcp.Required(),
+		),
+	), s.handleGetGuide)
 
 	// Tool: get_status - Get API status
 	s.mcp.AddTool(mcp.NewTool("get_status",
@@ -252,6 +287,46 @@ func (s *Server) registerTools() {
 			mcp.Required(),
 		),
 	), s.handleDeleteUser)
+
+	// Tool: update_user_role - Update a user's role
+	s.mcp.AddTool(mcp.NewTool("update_user_role",
+		mcp.WithDescription("Update a user's role. Valid roles are 'admin', 'rw', or 'ro'. Requires Admin role."),
+		mcp.WithString("user_id",
+			mcp.Description("User ID to update (get from list_users)"),
+			mcp.Required(),
+		),
+		mcp.WithString("role",
+			mcp.Description("New role: 'admin' (full access), 'rw' (read + publish), or 'ro' (read-only)"),
+			mcp.Required(),
+		),
+	), s.handleUpdateUserRole)
+
+	// Tool: rotate_api_key - Rotate a user's API key
+	s.mcp.AddTool(mcp.NewTool("rotate_api_key",
+		mcp.WithDescription("Generate a new API key for a user, invalidating the old one. IMPORTANT: The new API key is only shown once - save it immediately. Requires Admin role."),
+		mcp.WithString("user_id",
+			mcp.Description("User ID whose key to rotate (get from list_users)"),
+			mcp.Required(),
+		),
+	), s.handleRotateAPIKey)
+
+	// Tool: list_settings - List all settings
+	s.mcp.AddTool(mcp.NewTool("list_settings",
+		mcp.WithDescription("List all configuration settings and their current values. Requires Admin role."),
+	), s.handleListSettings)
+
+	// Tool: update_setting - Update a setting
+	s.mcp.AddTool(mcp.NewTool("update_setting",
+		mcp.WithDescription("Update a configuration setting value. Use list_settings to see available settings. Requires Admin role."),
+		mcp.WithString("key",
+			mcp.Description("Setting key to update"),
+			mcp.Required(),
+		),
+		mcp.WithString("value",
+			mcp.Description("New value for the setting"),
+			mcp.Required(),
+		),
+	), s.handleUpdateSetting)
 }
 
 // registerResources registers MCP resources.
@@ -611,6 +686,35 @@ func (s *Server) handleGetSpecs(ctx context.Context, request mcp.CallToolRequest
 	return mcp.NewToolResultText(sb.String()), nil
 }
 
+func (s *Server) handleGetDeviceRefs(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	deviceID, _ := args["device_id"].(string)
+
+	refs, err := s.client.GetDeviceRefs(deviceID)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get device refs: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# References for %s\n\n", refs.Name))
+
+	if len(refs.References) == 0 {
+		sb.WriteString("No references found.\n")
+	} else {
+		for _, ref := range refs.References {
+			if ref.URL != "" {
+				sb.WriteString(fmt.Sprintf("- **%s** (%s): [%s](%s)\n", ref.Title, ref.Type, ref.URL, ref.URL))
+			} else if ref.ID != "" {
+				sb.WriteString(fmt.Sprintf("- **%s** (%s): Device ID: %s\n", ref.Title, ref.Type, ref.ID))
+			} else {
+				sb.WriteString(fmt.Sprintf("- **%s** (%s)\n", ref.Title, ref.Type))
+			}
+		}
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
 func (s *Server) handleListDocuments(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	deviceID, _ := args["device_id"].(string)
@@ -630,6 +734,71 @@ func (s *Server) handleListDocuments(ctx context.Context, request mcp.CallToolRe
 	for _, d := range result.Data {
 		size := float64(d.SizeBytes) / 1024
 		sb.WriteString(fmt.Sprintf("- **%s** (ID: %s) - %.1f KB\n", d.Filename, d.ID, size))
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleGetDocument(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	documentID, _ := args["document_id"].(string)
+
+	doc, err := s.client.GetDocument(documentID)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get document: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# Document: %s\n\n", doc.Filename))
+	sb.WriteString(fmt.Sprintf("- **ID:** %s\n", doc.ID))
+	sb.WriteString(fmt.Sprintf("- **Device ID:** %s\n", doc.DeviceID))
+	sb.WriteString(fmt.Sprintf("- **Path:** %s\n", doc.Path))
+	sb.WriteString(fmt.Sprintf("- **MIME Type:** %s\n", doc.MimeType))
+	sb.WriteString(fmt.Sprintf("- **Size:** %.1f KB\n", float64(doc.SizeBytes)/1024))
+	sb.WriteString(fmt.Sprintf("- **Checksum:** %s\n", doc.Checksum))
+	sb.WriteString(fmt.Sprintf("- **Indexed At:** %s\n", doc.IndexedAt))
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleListGuides(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	limit := 50
+	if l, ok := args["limit"].(float64); ok {
+		limit = int(l)
+	}
+
+	result, err := s.client.ListGuides(limit, 0)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to list guides: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Found %d guides:\n\n", result.Total))
+
+	for _, g := range result.Data {
+		sb.WriteString(fmt.Sprintf("- **%s** (ID: %s)\n", g.Title, g.ID))
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleGetGuide(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	guideID, _ := args["guide_id"].(string)
+
+	guide, err := s.client.GetGuide(guideID)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get guide: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# %s\n\n", guide.Title))
+	sb.WriteString(fmt.Sprintf("**ID:** %s\n", guide.ID))
+	sb.WriteString(fmt.Sprintf("**Path:** %s\n\n", guide.Path))
+	if guide.Content != "" {
+		sb.WriteString("---\n\n")
+		sb.WriteString(guide.Content)
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
@@ -1082,6 +1251,72 @@ func (s *Server) handleDeleteUser(ctx context.Context, request mcp.CallToolReque
 	}
 
 	return mcp.NewToolResultText(fmt.Sprintf("# User Deleted\n\nUser `%s` has been deleted.", userID)), nil
+}
+
+func (s *Server) handleUpdateUserRole(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	userID, _ := args["user_id"].(string)
+	role, _ := args["role"].(string)
+
+	err := s.client.UpdateUserRole(userID, role)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to update user role: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("# User Role Updated\n\nUser `%s` role changed to `%s`.", userID, role)), nil
+}
+
+func (s *Server) handleRotateAPIKey(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	userID, _ := args["user_id"].(string)
+
+	resp, err := s.client.RotateAPIKey(userID)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to rotate API key: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString("# API Key Rotated\n\n")
+	sb.WriteString(fmt.Sprintf("User `%s` has a new API key.\n\n", userID))
+	sb.WriteString("**⚠️ IMPORTANT:** Save this key now - it will not be shown again!\n\n")
+	sb.WriteString(fmt.Sprintf("```\n%s\n```\n", resp.APIKey))
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleListSettings(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	resp, err := s.client.ListSettings()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to list settings: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString("# Configuration Settings\n\n")
+
+	if len(resp.Settings) == 0 {
+		sb.WriteString("No settings configured.\n")
+	} else {
+		sb.WriteString("| Key | Value | Updated At |\n")
+		sb.WriteString("|-----|-------|------------|\n")
+		for _, s := range resp.Settings {
+			sb.WriteString(fmt.Sprintf("| %s | %s | %s |\n", s.Key, s.Value, s.UpdatedAt))
+		}
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleUpdateSetting(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	key, _ := args["key"].(string)
+	value, _ := args["value"].(string)
+
+	err := s.client.UpdateSetting(key, value)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to update setting: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("# Setting Updated\n\n`%s` = `%s`", key, value)), nil
 }
 
 // Resource handlers

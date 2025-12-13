@@ -208,6 +208,56 @@ type SyncResponse struct {
 	Error        string `json:"error,omitempty"`
 }
 
+// RotateKeyResponse is the response from rotating an API key.
+type RotateKeyResponse struct {
+	APIKey  string `json:"api_key"`
+	Message string `json:"message"`
+}
+
+// Setting represents a configuration setting.
+type Setting struct {
+	Key       string `json:"key"`
+	Value     string `json:"value"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// SettingsResponse is the response from the settings endpoint.
+type SettingsResponse struct {
+	Settings []Setting `json:"settings"`
+}
+
+// Reference represents a device reference (related device or external link).
+type Reference struct {
+	Type  string `json:"type"`
+	Title string `json:"title"`
+	URL   string `json:"url,omitempty"`
+	ID    string `json:"id,omitempty"`
+}
+
+// RefsResponse is the response from the device refs endpoint.
+type RefsResponse struct {
+	DeviceID   string      `json:"device_id"`
+	Name       string      `json:"name"`
+	References []Reference `json:"references"`
+}
+
+// Guide represents a documentation guide.
+type Guide struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Path      string `json:"path"`
+	Content   string `json:"content,omitempty"`
+	IndexedAt string `json:"indexed_at"`
+}
+
+// GuidesResponse is the response from the guides list endpoint.
+type GuidesResponse struct {
+	Data   []Guide `json:"data"`
+	Total  int     `json:"total"`
+	Limit  int     `json:"limit"`
+	Offset int     `json:"offset"`
+}
+
 // Search searches for devices.
 func (c *Client) Search(query string, limit int, domain, deviceType string) (*SearchResponse, error) {
 	params := url.Values{}
@@ -465,6 +515,122 @@ func (c *Client) DeleteUser(id string) error {
 	return nil
 }
 
+// UpdateUserRole updates a user's role.
+// Requires Admin role.
+func (c *Client) UpdateUserRole(id, role string) error {
+	req := map[string]string{"role": role}
+	return c.put("/admin/users/"+id+"/role", req)
+}
+
+// RotateAPIKey rotates a user's API key and returns the new key.
+// Requires Admin role.
+func (c *Client) RotateAPIKey(id string) (*RotateKeyResponse, error) {
+	var resp RotateKeyResponse
+	if err := c.post("/admin/users/"+id+"/rotate-key", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// ListSettings lists all settings.
+// Requires Admin role.
+func (c *Client) ListSettings() (*SettingsResponse, error) {
+	var resp SettingsResponse
+	if err := c.get("/admin/settings", &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// UpdateSetting updates a setting value.
+// Requires Admin role.
+func (c *Client) UpdateSetting(key, value string) error {
+	req := map[string]string{"value": value}
+	return c.put("/admin/settings/"+key, req)
+}
+
+// GetDeviceRefs gets the references for a device.
+func (c *Client) GetDeviceRefs(id string) (*RefsResponse, error) {
+	var resp RefsResponse
+	if err := c.get("/devices/"+id+"/refs", &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// ListGuides lists guides with pagination.
+func (c *Client) ListGuides(limit, offset int) (*GuidesResponse, error) {
+	params := url.Values{}
+	if limit > 0 {
+		params.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	if offset > 0 {
+		params.Set("offset", fmt.Sprintf("%d", offset))
+	}
+
+	path := "/guides"
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
+
+	var resp GuidesResponse
+	if err := c.get(path, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// GetGuide gets a guide by ID.
+func (c *Client) GetGuide(id string) (*Guide, error) {
+	var resp Guide
+	if err := c.get("/guides/"+id, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// GetDocument gets a document by ID.
+func (c *Client) GetDocument(id string) (*Document, error) {
+	var resp Document
+	if err := c.get("/documents/"+id, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// DownloadDocument downloads a document's content by ID.
+func (c *Client) DownloadDocument(id string) ([]byte, string, error) {
+	req, err := http.NewRequest("GET", c.baseURL+"/api/"+APIVersion+"/documents/"+id+"/download", nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create request: %w", err)
+	}
+	if c.apiKey != "" {
+		req.Header.Set("X-API-Key", c.apiKey)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errResp ErrorResponse
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, "", fmt.Errorf("API error (%d): %s", resp.StatusCode, string(body))
+		}
+		return nil, "", fmt.Errorf("API error (%d): %s", resp.StatusCode, errResp.Error)
+	}
+
+	content, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	return content, contentType, nil
+}
 
 // get performs a GET request and decodes the JSON response.
 func (c *Client) get(path string, result interface{}) error {
@@ -502,6 +668,11 @@ func (c *Client) get(path string, result interface{}) error {
 // post performs a POST request and decodes the JSON response.
 func (c *Client) post(path string, body interface{}, result interface{}) error {
 	return c.doJSON("POST", path, body, result)
+}
+
+// put performs a PUT request with JSON body.
+func (c *Client) put(path string, body interface{}) error {
+	return c.doJSON("PUT", path, body, nil)
 }
 
 // delete performs a DELETE request and decodes the JSON response.
