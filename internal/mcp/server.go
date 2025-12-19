@@ -96,6 +96,24 @@ func (s *Server) registerTools() {
 		),
 	), s.handleSearch)
 
+	// Tool: search_semantic - Semantic/vector search using embeddings
+	s.mcp.AddTool(mcp.NewTool("search_semantic",
+		mcp.WithDescription("Search documentation using semantic similarity (AI embeddings). Unlike keyword search, this understands meaning and context. Use for natural language queries like 'sensor for outdoor weather monitoring' or 'microcontroller with WiFi for IoT'. Returns results ranked by semantic similarity. Note: Requires vector search to be enabled on the API server."),
+		mcp.WithString("query",
+			mcp.Description("Natural language query describing what you're looking for"),
+			mcp.Required(),
+		),
+		mcp.WithString("domain",
+			mcp.Description("Filter by domain: 'hardware', 'software', or 'protocol'"),
+		),
+		mcp.WithString("type",
+			mcp.Description("Filter by device type (e.g., 'sensors', 'mcu-boards', 'sbc', 'power', 'displays')"),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description("Maximum results to return (default: 10, max: 100)"),
+		),
+	), s.handleSemanticSearch)
+
 	// Tool: get_device - Get device details
 	s.mcp.AddTool(mcp.NewTool("get_device",
 		mcp.WithDescription("Get complete documentation for a specific device including full markdown content, metadata, and specifications. Use the device_id from search_manuals or list_devices results."),
@@ -390,6 +408,7 @@ func (s *Server) handleMyCapabilities(ctx context.Context, request mcp.CallToolR
 	sb.WriteString("| Tool | Description |\n")
 	sb.WriteString("|------|-------------|\n")
 	sb.WriteString("| `search_manuals` | Search documentation by keyword |\n")
+	sb.WriteString("| `search_semantic` | Search by meaning (AI embeddings) |\n")
 	sb.WriteString("| `list_devices` | Browse all devices |\n")
 	sb.WriteString("| `get_device` | Get full device documentation |\n")
 	sb.WriteString("| `get_pinout` | Get GPIO pinout table |\n")
@@ -588,6 +607,55 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 			sb.WriteString(fmt.Sprintf("  %s\n", r.Snippet))
 		}
 		sb.WriteString("\n")
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleSemanticSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	query, _ := args["query"].(string)
+	domain, _ := args["domain"].(string)
+	deviceType, _ := args["type"].(string)
+	limit := 10
+	if l, ok := args["limit"].(float64); ok {
+		limit = int(l)
+	}
+
+	results, err := s.client.SemanticSearch(query, limit, domain, deviceType)
+	if err != nil {
+		// Check if semantic search is not enabled
+		if strings.Contains(err.Error(), "not enabled") || strings.Contains(err.Error(), "503") {
+			return mcp.NewToolResultError("Semantic search is not enabled on the API server. Use search_manuals for keyword search instead."), nil
+		}
+		return mcp.NewToolResultError(fmt.Sprintf("semantic search failed: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# Semantic Search Results\n\n"))
+	sb.WriteString(fmt.Sprintf("Query: \"%s\"\n", results.Query))
+	sb.WriteString(fmt.Sprintf("Found: %d results\n\n", results.Count))
+
+	for i, r := range results.Results {
+		sb.WriteString(fmt.Sprintf("## %d. %s (Score: %.3f)\n", i+1, r.Name, r.Score))
+		sb.WriteString(fmt.Sprintf("- **Device ID:** %s\n", r.DeviceID))
+		sb.WriteString(fmt.Sprintf("- **Domain:** %s | **Type:** %s\n", r.Domain, r.Type))
+		if r.Heading != "" {
+			sb.WriteString(fmt.Sprintf("- **Section:** %s\n", r.Heading))
+		}
+		// Show truncated content preview
+		content := r.Content
+		if len(content) > 200 {
+			content = content[:200] + "..."
+		}
+		sb.WriteString(fmt.Sprintf("\n> %s\n\n", content))
+	}
+
+	if results.Count == 0 {
+		sb.WriteString("No results found. Try:\n")
+		sb.WriteString("- Using different keywords or phrasing\n")
+		sb.WriteString("- Removing filters to broaden the search\n")
+		sb.WriteString("- Using `search_manuals` for keyword-based search\n")
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
