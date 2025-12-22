@@ -393,9 +393,10 @@ func (s *Server) handleMyCapabilities(ctx context.Context, request mcp.CallToolR
 			role = "unknown"
 		} else if user != nil {
 			userName = user.Name
-			role = user.Role
+			role = user.Role()
 			sb.WriteString(fmt.Sprintf("**User:** %s\n", userName))
 			sb.WriteString(fmt.Sprintf("**Role:** %s\n", role))
+			sb.WriteString(fmt.Sprintf("**Capabilities:** %s\n", user.CapabilitiesString()))
 			sb.WriteString("**Status:** Authenticated\n\n")
 		}
 	} else {
@@ -473,8 +474,8 @@ func (s *Server) handleIngestWorkflow(ctx context.Context, request mcp.CallToolR
 	// Check if user has RW permissions
 	if s.client.HasAPIKey() {
 		user, err := s.client.GetMe()
-		if err == nil && user != nil && (user.Role == "rw" || user.Role == "admin") {
-			sb.WriteString("**Your Role:** " + user.Role + " ✓ (can publish)\n\n")
+		if err == nil && user != nil && (user.CanWrite() || user.CanAdmin()) {
+			sb.WriteString("**Your Role:** " + user.Role() + " ✓ (can publish)\n\n")
 		} else {
 			sb.WriteString("**⚠️ Note:** You need RW or Admin role to publish. Current workflow is read-only.\n\n")
 		}
@@ -963,7 +964,8 @@ func (s *Server) handleInfo(ctx context.Context, request mcp.CallToolRequest) (*
 			sb.WriteString(fmt.Sprintf("- **User:** Error fetching user info (%v)\n", err))
 		} else if user != nil {
 			sb.WriteString(fmt.Sprintf("- **User:** %s\n", user.Name))
-			sb.WriteString(fmt.Sprintf("- **Role:** %s\n", user.Role))
+			sb.WriteString(fmt.Sprintf("- **Role:** %s\n", user.Role()))
+			sb.WriteString(fmt.Sprintf("- **Capabilities:** %s\n", user.CapabilitiesString()))
 			sb.WriteString(fmt.Sprintf("- **Active:** %t\n", user.IsActive))
 		}
 	} else {
@@ -1310,12 +1312,12 @@ func (s *Server) handleListUsers(ctx context.Context, request mcp.CallToolReques
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("# Users (%d)\n\n", resp.Count))
-	sb.WriteString("| ID | Name | Role | Active | Created |\n")
-	sb.WriteString("|-----|------|------|--------|--------|\n")
+	sb.WriteString("| ID | Name | Role | Capabilities | Active | Created |\n")
+	sb.WriteString("|-----|------|------|--------------|--------|--------|\n")
 
 	for _, u := range resp.Users {
-		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %t | %s |\n",
-			u.ID, u.Name, u.Role, u.IsActive, u.CreatedAt))
+		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %t | %s |\n",
+			u.ID, u.Name, u.Role(), u.CapabilitiesString(), u.IsActive, u.CreatedAt))
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
@@ -1335,7 +1337,8 @@ func (s *Server) handleCreateUser(ctx context.Context, request mcp.CallToolReque
 	sb.WriteString("# User Created\n\n")
 	sb.WriteString(fmt.Sprintf("- **ID:** %s\n", resp.User.ID))
 	sb.WriteString(fmt.Sprintf("- **Name:** %s\n", resp.User.Name))
-	sb.WriteString(fmt.Sprintf("- **Role:** %s\n", resp.User.Role))
+	sb.WriteString(fmt.Sprintf("- **Role:** %s\n", resp.User.Role()))
+	sb.WriteString(fmt.Sprintf("- **Capabilities:** %s\n", resp.User.CapabilitiesString()))
 	sb.WriteString("\n## API Key\n\n")
 	sb.WriteString(fmt.Sprintf("```\n%s\n```\n\n", resp.APIKey))
 	sb.WriteString("**⚠️ Save this API key now - it will not be shown again!**\n")

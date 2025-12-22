@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -138,12 +139,72 @@ type ErrorResponse struct {
 
 // User represents the current authenticated user.
 type User struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Role       string `json:"role"`
-	CreatedAt  string `json:"created_at"`
-	LastSeenAt string `json:"last_seen_at"`
-	IsActive   bool   `json:"is_active"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Capabilities []string `json:"capabilities"`
+	CreatedAt    string   `json:"created_at"`
+	LastSeenAt   string   `json:"last_seen_at"`
+	IsActive     bool     `json:"is_active"`
+}
+
+// HasCapability checks if the user has a specific capability.
+// Supports wildcards: "*" matches everything, "read:*" matches all read capabilities.
+func (u *User) HasCapability(required string) bool {
+	for _, cap := range u.Capabilities {
+		if cap == "*" {
+			return true
+		}
+		if cap == required {
+			return true
+		}
+		// Check wildcard patterns like "read:*"
+		if len(cap) > 1 && cap[len(cap)-1] == '*' {
+			prefix := cap[:len(cap)-1]
+			if len(required) >= len(prefix) && required[:len(prefix)] == prefix {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// CanRead checks if user has any read capability.
+func (u *User) CanRead() bool {
+	return u.HasCapability("read:devices") || u.HasCapability("read:*") || u.HasCapability("*")
+}
+
+// CanWrite checks if user has any write capability.
+func (u *User) CanWrite() bool {
+	return u.HasCapability("write:publish") || u.HasCapability("write:*") || u.HasCapability("*")
+}
+
+// CanAdmin checks if user has any admin capability.
+func (u *User) CanAdmin() bool {
+	return u.HasCapability("admin:users") || u.HasCapability("admin:*") || u.HasCapability("*")
+}
+
+// Role returns the effective role based on capabilities.
+// Returns "admin" if user has admin capabilities, "rw" if user can write,
+// "ro" if user can only read, or "none" if no capabilities.
+func (u *User) Role() string {
+	if u.CanAdmin() {
+		return "admin"
+	}
+	if u.CanWrite() {
+		return "rw"
+	}
+	if u.CanRead() {
+		return "ro"
+	}
+	return "none"
+}
+
+// CapabilitiesString returns capabilities as a comma-separated string.
+func (u *User) CapabilitiesString() string {
+	if len(u.Capabilities) == 0 {
+		return "(none)"
+	}
+	return strings.Join(u.Capabilities, ", ")
 }
 
 // MeResponse is the response from the /me endpoint.
