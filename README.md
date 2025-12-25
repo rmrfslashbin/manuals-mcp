@@ -70,6 +70,7 @@ Add to your Claude Code MCP configuration (`~/.claude/claude_desktop_config.json
 | `get_pinout` | Get GPIO pinout for a device |
 | `get_specs` | Get device specifications |
 | `list_documents` | List available documents |
+| `delete_file` | Delete a file from documentation storage (requires RW/Admin role) |
 | `get_status` | Get API status and statistics |
 
 ## Available Resources

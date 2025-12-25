@@ -270,6 +270,18 @@ func (s *Server) registerTools() {
 		),
 	), s.handlePublishBatch)
 
+	// Tool: delete_file - Delete a file from documentation storage
+	s.mcp.AddTool(mcp.NewTool("delete_file",
+		mcp.WithDescription("Delete a file from the documentation storage. Use to remove incorrect files, duplicates, or outdated documentation. Optionally trigger reindex to update search results immediately. Requires RW or Admin role."),
+		mcp.WithString("path",
+			mcp.Description("Path to file in docs storage (e.g., 'power-supplies/fnirsi-dps150/FNIRSI_DPS150.md'). This is the same path format used in upload_file's dest_path."),
+			mcp.Required(),
+		),
+		mcp.WithBoolean("reindex",
+			mcp.Description("Trigger reindex after deletion to update search results immediately (default: false). Set to true if you want the file removed from search results right away."),
+		),
+	), s.handleDeleteFile)
+
 	// Tool: sync_to_git - Sync documentation to git repository
 	s.mcp.AddTool(mcp.NewTool("sync_to_git",
 		mcp.WithDescription("Sync all documentation changes to the git repository. Commits and pushes any new or modified files to the remote repository. Use this after publishing new documentation to persist changes. Requires RW or Admin role."),
@@ -1257,6 +1269,50 @@ func (s *Server) handlePublishBatch(ctx context.Context, request mcp.CallToolReq
 				break
 			}
 		}
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleDeleteFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	path, _ := args["path"].(string)
+	reindex, _ := args["reindex"].(bool)
+
+	if path == "" {
+		return mcp.NewToolResultError("path parameter is required"), nil
+	}
+
+	// Call API to delete file
+	resp, err := s.client.DeleteFile(path, reindex)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to delete file: %v", err)), nil
+	}
+
+	// Build formatted response
+	var sb strings.Builder
+	sb.WriteString("# File Deleted\n\n")
+	sb.WriteString(fmt.Sprintf("- **Path:** %s\n", resp.Path))
+	sb.WriteString(fmt.Sprintf("- **Status:** %s\n", resp.Message))
+
+	// Show cleanup details
+	if resp.DBDeviceDeleted || resp.VectorDeleted || resp.DBDocDeleted {
+		sb.WriteString("\n## Cleanup Summary\n\n")
+		if resp.DBDeviceDeleted {
+			sb.WriteString("- ✓ Device removed from database\n")
+		}
+		if resp.VectorDeleted {
+			sb.WriteString("- ✓ Vector embeddings removed\n")
+		}
+		if resp.DBDocDeleted {
+			sb.WriteString("- ✓ Document metadata removed\n")
+		}
+	}
+
+	if resp.ReindexTriggered {
+		sb.WriteString("\n🔄 **Reindex triggered** - search results will be updated shortly\n")
+	} else {
+		sb.WriteString("\n**Note:** Run `trigger_reindex()` to update search results\n")
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil

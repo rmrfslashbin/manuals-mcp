@@ -259,6 +259,17 @@ type UploadResponse struct {
 	Filename string `json:"filename"`
 }
 
+// DeleteResponse is the response from deleting a file.
+type DeleteResponse struct {
+	Success          bool   `json:"success"`
+	Path             string `json:"path"`
+	Message          string `json:"message"`
+	VectorDeleted    bool   `json:"vector_deleted"`
+	DBDeviceDeleted  bool   `json:"db_device_deleted"`
+	DBDocDeleted     bool   `json:"db_doc_deleted"`
+	ReindexTriggered bool   `json:"reindex_triggered"`
+}
+
 // SyncResponse is the response from triggering a git sync.
 type SyncResponse struct {
 	Status       string `json:"status"`
@@ -578,6 +589,55 @@ func (c *Client) UploadFile(destPath string, filename string, content []byte) (*
 	}
 
 	var result UploadResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// DeleteFile deletes a file from the docs storage.
+// Requires RW or Admin role.
+func (c *Client) DeleteFile(path string, reindex bool) (*DeleteResponse, error) {
+	// Build query parameters
+	params := url.Values{}
+	params.Set("path", path)
+	if reindex {
+		params.Set("reindex", "true")
+	}
+
+	// Build URL
+	endpoint := fmt.Sprintf("/api/%s/rw/delete?%s", APIVersion, params.Encode())
+
+	// Create request
+	req, err := http.NewRequest("DELETE", c.baseURL+endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if c.apiKey != "" {
+		req.Header.Set("X-API-Key", c.apiKey)
+	}
+
+	// Execute request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Handle errors
+	if resp.StatusCode != http.StatusOK {
+		var errResp ErrorResponse
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, string(body))
+		}
+		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, errResp.Error)
+	}
+
+	// Decode response
+	var result DeleteResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
