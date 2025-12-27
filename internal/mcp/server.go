@@ -1024,6 +1024,9 @@ func (s *Server) handleGetReindexStatus(ctx context.Context, request mcp.CallToo
 		sb.WriteString("\n## Last Run Stats\n\n")
 		sb.WriteString(fmt.Sprintf("- **Devices Indexed:** %d\n", resp.LastRun.DevicesIndexed))
 		sb.WriteString(fmt.Sprintf("- **Documents Indexed:** %d\n", resp.LastRun.DocumentsIndexed))
+		if resp.LastRun.GuidesIndexed > 0 {
+			sb.WriteString(fmt.Sprintf("- **Guides Indexed:** %d\n", resp.LastRun.GuidesIndexed))
+		}
 		sb.WriteString(fmt.Sprintf("- **Errors:** %d\n", resp.LastRun.Errors))
 		sb.WriteString(fmt.Sprintf("- **Duration:** %s\n", resp.LastRun.Duration))
 	}
@@ -1153,6 +1156,9 @@ func (s *Server) handlePublish(ctx context.Context, request mcp.CallToolRequest)
 				sb.WriteString(fmt.Sprintf("- **Completed:** Reindex finished in %s\n", status.LastRun.Duration))
 				sb.WriteString(fmt.Sprintf("- **Devices:** %d indexed\n", status.LastRun.DevicesIndexed))
 				sb.WriteString(fmt.Sprintf("- **Documents:** %d indexed\n", status.LastRun.DocumentsIndexed))
+				if status.LastRun.GuidesIndexed > 0 {
+					sb.WriteString(fmt.Sprintf("- **Guides:** %d indexed\n", status.LastRun.GuidesIndexed))
+				}
 				break
 			}
 		}
@@ -1266,6 +1272,10 @@ func (s *Server) handlePublishBatch(ctx context.Context, request mcp.CallToolReq
 			if status.Status == "idle" {
 				sb.WriteString(fmt.Sprintf("- **Completed:** Reindex finished in %s\n", status.LastRun.Duration))
 				sb.WriteString(fmt.Sprintf("- **Devices:** %d indexed\n", status.LastRun.DevicesIndexed))
+				sb.WriteString(fmt.Sprintf("- **Documents:** %d indexed\n", status.LastRun.DocumentsIndexed))
+				if status.LastRun.GuidesIndexed > 0 {
+					sb.WriteString(fmt.Sprintf("- **Guides:** %d indexed\n", status.LastRun.GuidesIndexed))
+				}
 				break
 			}
 		}

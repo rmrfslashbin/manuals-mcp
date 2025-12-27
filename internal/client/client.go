@@ -227,6 +227,7 @@ type ReindexStatusResponse struct {
 	LastRun       *struct {
 		DevicesIndexed   int    `json:"devices_indexed"`
 		DocumentsIndexed int    `json:"documents_indexed"`
+		GuidesIndexed    int    `json:"guides_indexed"`
 		Errors           int    `json:"errors"`
 		Duration         string `json:"duration"`
 	} `json:"last_run,omitempty"`

@@ -336,7 +336,7 @@ func TestGetMe(t *testing.T) {
 			t.Errorf("X-API-Key = %s, want test-key", r.Header.Get("X-API-Key"))
 		}
 		json.NewEncoder(w).Encode(MeResponse{
-			User: User{ID: "user-1", Name: "testuser", Role: "admin"},
+			User: User{ID: "user-1", Name: "testuser", Capabilities: []string{"*"}},
 		})
 	}))
 	defer server.Close()
@@ -487,7 +487,7 @@ func TestCreateUser(t *testing.T) {
 
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(CreateUserResponse{
-			User:    User{ID: "user-2", Name: "newuser", Role: "ro"},
+			User:    User{ID: "user-2", Name: "newuser", Capabilities: []string{"read:*"}},
 			APIKey:  "mapi_test123",
 			Message: "User created",
 		})
